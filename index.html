@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="description"
+        content="Multi-Task Interactive Robot Fleet Learning with Visual World Models">
+  <meta name="keywords" content="Multi-Task Interactive Robot Fleet Learning">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Multi-Task Interactive Robot Fleet Learning with Visual World Models</title>
+
+  <!-- Global site tag (gtag.js) - Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-PYVRSFMDRL"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+
+    function gtag() {
+      dataLayer.push(arguments);
+    }
+
+    gtag('js', new Date());
+
+    gtag('config', 'G-PYVRSFMDRL');
+  </script>
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro"
+        rel="stylesheet">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+  <link rel="icon" href="">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
+  <script src="./static/js/bulma-carousel.min.js"></script>
+  <script src="./static/js/bulma-slider.min.js"></script>
+  <script src="./static/js/index.js"></script>
+</head>
+<body>
+
+<nav class="navbar" role="navigation" aria-label="main navigation">
+  <div class="navbar-brand">
+    <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false">
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </a>
+  </div>
+</nav>
+
+
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title is-1 publication-title">Multi-Task Interactive Robot Fleet Learning with Visual World Models</h1>
+          
+          <div class="is-size-5 publication-authors">
+            <span class="author-block">Huihan Liu, Yu Zhang, Vaarij Betala, Evan Zhang, James Liu, Crystal Ding, Yuke Zhu</span>
+          </div>
+
+	  <div class="is-size-5 publication-authors">
+            <span class="author-block">The University of Texas at Austin</span>
+          </div>
+
+          <div class="is-size-5 publication-authors">
+            <span class="author-block" style="color: #fa694e;">8th Conference on Robot Learning (CoRL 2024)</span>
+          </div>
+
+          <div class="column has-text-centered">
+            <div class="publication-links">
+              <!-- PDF Link. -->
+              <span class="link-block">
+                <a href="https://drive.google.com/file/d/1TS4O3Pd8vbmlGSSU1a_7m2A3TAE8qImt/view?usp=sharing"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="fas fa-file-pdf"></i>
+                  </span>
+                  <span>Appendix</span>
+                </a>
+              </span>
+              <span class="link-block">
+                <a href="https://drive.google.com/file/d/1SdunzRd3pPqA2_A_3xOxm7D4IFTNW-Ym/view?usp=sharing"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="fas fa-file-pdf"></i>
+                  </span>
+                  <span>Paper</span>
+                </a>
+              </span>
+              <!-- Code Link. -->
+              <span class="link-block">
+                <a href="https://github.com/firework-corl2024/firework"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="fab fa-github"></i>
+                  </span>
+                  <span>Code</span>
+                </a>
+              </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <!-- Abstract. -->
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Abstract</h2>
+        <div class="content has-text-justified">
+          <p>
+            Recent advancements in large multi-task robot agents hold promise of robot fleets operating in 
+            household and industrial settings, capable of performing diverse tasks across various environments. 
+            Despite these advances, these robots often struggle with generalization and robustness in real-world, 
+            unstructured settings, limiting their practical deployment. To address these issues, we propose <span class="dnerf">Firework</span>, 
+            a framework for multi-task interactive robot fleet learning, supervising the continual policy update 
+            throughout deployment with efficient multi-task runtime monitoring and humans in the loop. We realize 
+            this with a visual world model to predict future task outcomes, which serves as the backbone for learned
+            representation across downstream error prediction tasks. We train dynamic error predictors that auto-adjust
+            their prediction criterias to adapt to the robot's evolving autonomy, reducing human workload over time. 
+            Evaluations on large-scale benchmarks demonstrate our framework's effectiveness in improving multi-task 
+            policy performance and monitoring accuracy. We demonstrate the performance of <span class="dnerf">Firework</span> on robocasa 
+            in simulation and mutex in real world, two large, diverse multi-task environment benchmarks.
+          </p>
+        </div>
+      </div>
+    </div>
+    <!--/ Abstract. -->
+
+    <!-- Paper video. -->
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Video</h2>
+        <div class="publication-video">
+          <iframe src="https://www.youtube.com/embed/IAXoV9VE93c?rel=0&amp;showinfo=0&hd=1"
+                  frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+        </div>
+      </div>
+    </div>
+    <!--/ Paper video. -->
+  </div>
+</section>
+
+</body>
+</html>
