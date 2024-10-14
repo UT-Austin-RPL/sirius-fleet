@@ -155,3 +155,18 @@ body {
 #interpolation-image-wrapper img {
   border-radius: 5px;
 }
+
+
+.publication-video {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.publication-video video {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  aspect-ratio: 16 / 9; /* Adjust as needed */
+}
