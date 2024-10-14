@@ -120,26 +120,55 @@
         <h2 class="title is-3">Abstract</h2>
         <div class="content has-text-justified">
           <p>
-            Recent advancements in large multi-task robot agents hold promise of robot fleets operating in 
-            household and industrial settings, capable of performing diverse tasks across various environments. 
-            Despite these advances, these robots often struggle with generalization and robustness in real-world, 
-            unstructured settings, limiting their practical deployment. To address these issues, we propose <span class="dnerf">Firework</span>, 
-            a framework for multi-task interactive robot fleet learning, supervising the continual policy update 
-            throughout deployment with efficient multi-task runtime monitoring and humans in the loop. We realize 
-            this with a visual world model to predict future task outcomes, which serves as the backbone for learned
-            representation across downstream error prediction tasks. We train dynamic error predictors that auto-adjust
-            their prediction criterias to adapt to the robot's evolving autonomy, reducing human workload over time. 
-            Evaluations on large-scale benchmarks demonstrate our framework's effectiveness in improving multi-task 
-            policy performance and monitoring accuracy. We demonstrate the performance of <span class="dnerf">Firework</span> on robocasa 
-            in simulation and mutex in real world, two large, diverse multi-task environment benchmarks.
+            Recent advancements in large-scale multi-task robot learning offer the potential for deploying robot fleets in household and industrial settings, enabling them to perform diverse tasks across various environments. However, these robots often face challenges with generalization and robustness when exposed to real-world variability and uncertainty. We introduce Sirius-Fleet, a multi-task interactive robot fleet learning framework to address these challenges. Sirius-Fleet monitors robot performance during deployment and involves humans to correct the robot's actions when necessary. We employ a visual world model to predict the outcomes of robot executions and build anomaly predictors to predict whether future states will likely result in anomalies. As the robot autonomy improves, the anomaly predictors refine their prediction criteria, leading to fewer requests for human intervention and gradually reducing human workload over time. Evaluations on large-scale benchmarks demonstrate Sirius-Fleet's effectiveness in improving multi-task policy performance and monitoring accuracy. We demonstrate Sirius-Fleet's performance in both RoboCasa in simulation and Mutex in the real world, two diverse, large-scale multi-task benchmarks.
           </p>
         </div>
       </div>
     </div>
     <!--/ Abstract. -->
 
-    <!-- Paper video. -->
+    <!-- Overview. -->
     <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Overview</h2>
+        <div class="content has-text-justified">
+          <p>
+            We introduce Sirius-Fleet, a multi-task interactive robot fleet learning framework. The framework consists of two stages: 1) Visual World Model Training and Inference, where we pre-train a visual world model on diverse datasets to predict future latent embeddings from past video frames, and 2) Multi-Task Interactive Fleet Learning, where the pre-trained model is used to supervise multi-task robot fleet deployment. During deployment, anomaly predictors monitor task performance in real time, involving humans for control when necessary. The policy and anomaly predictors are continuously fine-tuned with deployment data, enabling improved task performance over time.
+          </p>
+        </div>
+        <div class="publication-video">
+          <iframe src="videos/overview.mp4"
+                  frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+        </div>
+      </div>
+    </div>
+    <!--/ Overview. -->
+
+
+    <!-- Overview. -->
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Model Architecture</h2>
+        <div class="content has-text-justified">
+          <p>
+A key challenge in runtime monitoring is to effectively predict future task scenarios, as this allows the system to preempt potential failures before they occur. We develop a visual world model trained on diverse robot trajectories performing a large variety of tasks, which enables the prediction of future task outcomes and helps prevent potential failures. 
+
+The visual world model is trained by reconstructing image frames from input observations, which allows it to capture fine-grained visual details necessary for precise manipulation. The visual world model comprises a UNet-based encoder and decoder combined with a cVAE- and Transformer-based prediction model. This architecture allows the world model to predict future embeddings from the current state.
+
+The learned embeddings from the world model are then shared across downstream anomaly prediction tasks. We train two distinct types of anomaly predictors: one for failure detection and one for out-of-distribution (OOD) detection. The two predictors complement each other in practice: failure prediction detects failures similar to those identified by humans previously, and OOD detection captures cases when the robot is in novel, unfamiliar scenarios.
+          </p>
+        </div>
+        <div class="publication-video">
+          <iframe src="videos/figure2.mp4"
+                  frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+        </div>
+      </div>
+    </div>
+    <!--/ Overview. -->
+
+
+    <!-- Paper video. -->
+    <!-- <div class="columns is-centered has-text-centered">
       <div class="column is-four-fifths">
         <h2 class="title is-3">Video</h2>
         <div class="publication-video">
@@ -147,7 +176,7 @@
                   frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
         </div>
       </div>
-    </div>
+    </div> -->
     <!--/ Paper video. -->
   </div>
 </section>
