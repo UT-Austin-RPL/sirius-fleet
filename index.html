@@ -159,19 +159,36 @@
     <!-- Overview. -->
     <div class="columns is-centered has-text-centered">
       <div class="column is-four-fifths">
-        <h2 class="title is-3">Model Architecture</h2>
+        <h2 class="title is-3">Visual World Model</h2>
         <div class="content has-text-justified">
           <p>
 A key challenge in runtime monitoring is to effectively predict future task scenarios, as this allows the system to preempt potential failures before they occur. We develop a visual world model trained on diverse robot trajectories performing a large variety of tasks, which enables the prediction of future task outcomes and helps prevent potential failures. 
 
 The visual world model is trained by reconstructing image frames from input observations, which allows it to capture fine-grained visual details necessary for precise manipulation. The visual world model comprises a UNet-based encoder and decoder combined with a cVAE- and Transformer-based prediction model. This architecture allows the world model to predict future embeddings from the current state.
-
-The learned embeddings from the world model are then shared across downstream anomaly prediction tasks. We train two distinct types of anomaly predictors: one for failure detection and one for out-of-distribution (OOD) detection. The two predictors complement each other in practice: failure prediction detects failures similar to those identified by humans previously, and OOD detection captures cases when the robot is in novel, unfamiliar scenarios.
           </p>
         </div>
         <div class="publication-video">
           <video muted autoplay controls width="100%">
             <source src="videos/architecture.mp4"  type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </div>
+    <!--/ Overview. -->
+
+
+    <!-- Overview. -->
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Anomaly Predictors</h2>
+        <div class="content has-text-justified">
+          <p>
+The learned embeddings from the world model are then shared across downstream anomaly prediction tasks. We train two distinct types of anomaly predictors: one for failure detection and one for out-of-distribution (OOD) detection. The two predictors complement each other in practice: failure prediction detects failures similar to those identified by humans previously, and OOD detection captures cases when the robot is in novel, unfamiliar scenarios.
+          </p>
+        </div>
+        <div class="publication-video">
+          <video muted autoplay controls width="100%">
+            <source src="videos/failure_predictors.mp4"  type="video/mp4">
           </video>
         </div>
       </div>
@@ -188,21 +205,21 @@ The learned embeddings from the world model are then shared across downstream an
       <h2 class="columns is-centered has-text-centered">Continuing Sirius</h2>
       <div id="results-carousel" class="carousel results-carousel">
         <div class="item item-video1">
-          <video poster="" id="video1" autoplay controls muted height="100%">
+          <video poster="" id="video1" autoplay controls muted height="50%">
             <!-- Your video file here -->
             <source src="videos/0_sirius.mp4"
             type="video/mp4">
           </video>
         </div>
         <div class="item item-video2">
-          <video poster="" id="video2" autoplay controls muted height="100%">
+          <video poster="" id="video2" autoplay controls muted height="50%">
             <!-- Your video file here -->
             <source src="videos/1_sirius-rm.mp4"
             type="video/mp4">
           </video>
         </div>
         <div class="item item-video3">
-          <video poster="" id="video3" autoplay controls muted height="100%">\
+          <video poster="" id="video3" autoplay controls muted height="50%">\
             <!-- Your video file here -->
             <source src="videos/2_sirius-fleet.mp4"
             type="video/mp4">
