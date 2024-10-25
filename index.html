@@ -114,7 +114,7 @@
   <div class="container is-max-desktop">
     <div class="hero-body">
       <!-- <video poster="" id="tree" autoplay controls muted height="100%"> -->
-        <iframe height="100%" src="https://www.youtube.com/embed/fjTtftFNOls?si=cjvqRDTvgOOBQDqN" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+        <iframe width="560" height="315" src="https://www.youtube.com/embed/fjTtftFNOls?si=cjvqRDTvgOOBQDqN" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
         <!-- <iframe width="560" height="315" src="https://www.youtube.com/embed/fjTtftFNOls?si=cjvqRDTvgOOBQDqN" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe> -->
           
       <!-- </video> -->
@@ -210,26 +210,20 @@ The learned embeddings from the world model are then shared across downstream an
   <div class="hero-body">
     <div class="container">
       <h2 class="columns is-centered has-text-centered">Continuing Sirius</h2>
-      <div id="results-carousel" class="carousel results-carousel">
+      <div id="results-carousel" class="carousel results-carousel" style="display: flex; gap: 20px; overflow-x: auto;">
         <div class="item item-video1">
-          <video poster="" id="video1" autoplay controls muted height="50%">
-            <!-- Your video file here -->
-            <source src="videos/0_sirius.mp4"
-            type="video/mp4">
+          <video poster="" id="video1" autoplay controls muted style="height: 200px;">
+            <source src="videos/0_sirius.mp4" type="video/mp4">
           </video>
         </div>
         <div class="item item-video2">
-          <video poster="" id="video2" autoplay controls muted height="50%">
-            <!-- Your video file here -->
-            <source src="videos/1_sirius-rm.mp4"
-            type="video/mp4">
+          <video poster="" id="video2" autoplay controls muted style="height: 200px;">
+            <source src="videos/1_sirius-rm.mp4" type="video/mp4">
           </video>
         </div>
         <div class="item item-video3">
-          <video poster="" id="video3" autoplay controls muted height="50%">
-            <!-- Your video file here -->
-            <source src="videos/2_sirius-fleet.mp4"
-            type="video/mp4">
+          <video poster="" id="video3" autoplay controls muted style="height: 200px;">
+            <source src="videos/2_sirius-fleet.mp4" type="video/mp4">
           </video>
         </div>
       </div>
@@ -237,6 +231,7 @@ The learned embeddings from the world model are then shared across downstream an
   </div>
 </section>
 <!-- End video carousel -->
+
 
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">
