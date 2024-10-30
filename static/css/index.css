@@ -150,5 +150,4 @@ body {
   height: auto;
   display: block;
   object-fit: contain;
-  aspect-ratio: 16 / 9; /* Adjust as needed */
 }
