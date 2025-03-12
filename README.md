@@ -86,15 +86,15 @@ mutex (real robot): download dataset [here](https://huggingface.co/datasets/huih
 Create symlinks for the data so that the human-in-the-loop data will be saved at `~/robocasa-hitl` and `~/mutex-hitl`:
 
 ```
-ln -s $HITL_ROBOCASA_DATASET_PATH ~/robocasa_hitl
-ln -s $HITL_MUTEX_DATASET_PATH ~/mutex_hitl
+ln -s $HITL_ROBOCASA_DATASET_PATH ~/robocasa-hitl
+ln -s $HITL_MUTEX_DATASET_PATH ~/mutex-hitl
 ```
 
 ### Training Sirius-Fleet
 
 #### World Model
 
-We suggest that you use the config generation script to generate a json file that is customized to the environments and corresponding datasets. It also allows you specify different hyperparameters using the flags, and also sweep different hyperparameter options. See `gen_config_world_model.py` and `../helper.py` for details.
+We suggest that you use the config generation script to generate a json file that is customized to the environments and corresponding datasets. It also allows you to specify different hyperparameters using the flags, and also sweep different hyperparameter options. See `gen_config_world_model.py` and `../helper.py` for details.
 
 ##### Robocasa: 
 ```
@@ -112,7 +112,7 @@ This training generates a checkpoint, which we refer to here as `world_model.pth
 
 We train the failure classifier based on the world model checkpoint `world_model.pth` from the previous timestep. 
 
-Change the data path for your own task (e.g., `OpenDoorSingleHinge.hdf5`). Note that this dataset is assumed to contain the attribute `intv_labels` as classifier labels. 
+Change your task's data path ($DATASET_PATH). Note that this dataset is assumed to contain the attribute `intv_labels` as classifier labels. 
 
 ```
 python robomimic/scripts/train.py --config robomimic/exps/templates/failure_classifier.json --dataset $DATASET_PATH --pretrained_world_model world_model.pth 
@@ -142,10 +142,6 @@ To finetune the policy on a previous policy checkpoint:
 
 ```
 python robomimic/scripts/config_gen/bc.py --env $ENV --name bc --n_seeds 3 --ckpt_path $POLICY_CKPT
-```
-
-```
-python robomimic/scripts/save_multitask_demos_embedding.py --json_path dataset.json --ckpt_path world_model.pth --save_path ood_embeddings
 ```
 
 ## Acknowledgements
