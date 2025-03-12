@@ -42,8 +42,26 @@ from robomimic.config import config_factory
 from robomimic.algo import algo_factory, RolloutPolicy
 from robomimic.utils.log_utils import PrintLogger, DataLogger, flush_warnings
 
+import matplotlib.pyplot as plt
+import seaborn as sns; sns.set_theme()
 
-def train(config, device, eval_only=False):
+def _plot_confusion_matrix(conf_matrix):
+    """
+    Helper function to plot confusion matrix
+    """
+    plt.clf()
+    ax = sns.heatmap(conf_matrix, annot=True, fmt='g', cmap="YlGnBu")
+    ax.set_xlabel('Predicted labels'); ax.set_ylabel('True labels')
+    ax.set_title('Confusion Matrix')
+    try:
+        ax.xaxis.set_ticklabels(["normal", "intv", "failure"])
+        ax.yaxis.set_ticklabels(["normal", "intv", "failure"])
+    except:
+        pass
+    figure = ax.get_figure()
+    return figure 
+
+def train(config, device):
     """
     Train a model using the algorithm.
     """
@@ -175,6 +193,10 @@ def train(config, device, eval_only=False):
         ckpt_dict = maybe_dict_from_checkpoint(ckpt_path=ckpt_path)
         model.deserialize(ckpt_dict["model"])
 
+        from pathlib import Path
+        ckpt_dir_from_previous = Path(config.experiment.ckpt_path).parent.absolute()
+        print(ckpt_dir_from_previous)
+
     print("\n============= Model Summary =============")
     print(model)  # print model summary
     print("")
@@ -243,18 +265,8 @@ def train(config, device, eval_only=False):
     # number of learning steps per epoch (defaults to a full dataset pass)
     train_num_steps = config.experiment.epoch_every_n_steps
     valid_num_steps = config.experiment.validation_epoch_every_n_steps
-    
-    for epoch in range(0, config.train.num_epochs + 1): # epoch numbers start at 1        
-        # if checkpoint directory is specified, load in new ckpt if exists
-        ckpt_path = config.experiment.ckpt_path
-        if ckpt_path is not None and os.path.isdir(os.path.expanduser(ckpt_path)):
-            ckpt_path = os.path.join(ckpt_path, "models", f"model_epoch_{epoch}.pth")
-            if os.path.exists(ckpt_path):
-                print("LOADING MODEL WEIGHTS FROM " + ckpt_path)
-                from robomimic.utils.file_utils import maybe_dict_from_checkpoint
-                ckpt_dict = maybe_dict_from_checkpoint(ckpt_path=ckpt_path)
-                model.deserialize(ckpt_dict["model"])
-        
+
+    for epoch in range(0, config.train.num_epochs + 1): # epoch numbers start at 1
         if epoch > 0 and not eval_only:
             step_log = TrainUtils.run_epoch(
                 model=model,
@@ -263,10 +275,29 @@ def train(config, device, eval_only=False):
                 num_steps=train_num_steps,
                 obs_normalization_stats=obs_normalization_stats,
             )
+            
+            if step_log.get("confusion_matrix", None) is not None:
+                confusion_matrix = step_log.pop("confusion_matrix")
+                conf_matrix_fig = _plot_confusion_matrix(confusion_matrix)
+                data_logger.record("Conf Matrix/Train", conf_matrix_fig, epoch, data_type='image')
+                
+            step_log_images = {}
+            if "reconstructions" in step_log:
+                step_log_images["reconstructions"] = step_log["reconstructions"]
+                step_log_images["targets"] = step_log["targets"]
+                step_log.pop("reconstructions")
+                step_log.pop("targets")
+            
             model.on_epoch_end(epoch)
 
             # setup checkpoint path
             epoch_ckpt_name = "model_epoch_{}".format(epoch)
+            
+            if config.experiment.ckpt_path is not None:
+                prev_epoch_name = os.path.split(config.experiment.ckpt_path)[-1].split(".")[0]
+                prev_epoch = int(prev_epoch_name.split("_")[-1])
+                print("starting from epoch: ", prev_epoch)
+                epoch_ckpt_name_for_prev = "model_epoch_{}".format(prev_epoch + epoch)
 
             # check for recurring checkpoint saving conditions
             should_save_ckpt = False
@@ -289,16 +320,43 @@ def train(config, device, eval_only=False):
                     data_logger.record("Timing_Stats/Train_{}".format(k[5:]), v, epoch)
                 else:
                     data_logger.record("Train/{}".format(k), v, epoch)
-
+                                        
+            for k, v in step_log_images.items():
+                for v_key in v:
+                    if "image" in v_key or "rgb" in v_key:
+                        assert (step_log_images[k][v_key] >= 0).all()
+                        assert (step_log_images[k][v_key] <= 1).all()
+                        data_logger.record("{}/{}".format(k, v_key), v[v_key], epoch, data_type='image')
+            
             # Evaluate the model on validation set
             if config.experiment.validate:
                 with torch.no_grad():
                     step_log = TrainUtils.run_epoch(model=model, data_loader=valid_loader, epoch=epoch, validate=True, num_steps=valid_num_steps)
+               
+                if step_log.get("confusion_matrix", None) is not None:
+                    confusion_matrix = step_log.pop("confusion_matrix")
+                    conf_matrix_fig = _plot_confusion_matrix(confusion_matrix)
+                    data_logger.record("Conf Matrix/Val", conf_matrix_fig, epoch, data_type='image')
+                    
+                step_log_images = {}
+                if "reconstructions" in step_log:
+                    step_log_images["reconstructions"] = step_log["reconstructions"]
+                    step_log_images["targets"] = step_log["targets"]
+                    step_log.pop("reconstructions")
+                    step_log.pop("targets")
+                    
                 for k, v in step_log.items():
                     if k.startswith("Time_"):
                         data_logger.record("Timing_Stats/Valid_{}".format(k[5:]), v, epoch)
                     else:
                         data_logger.record("Valid/{}".format(k), v, epoch)
+
+                for k, v in step_log_images.items():
+                    for v_key in v:
+                        if "image" in v_key or "rgb" in v_key:
+                            assert (step_log_images[k][v_key] >= 0).all()
+                            assert (step_log_images[k][v_key] <= 1).all()
+                            data_logger.record("{}/{}".format(k, v_key), v[v_key], epoch, data_type='image')
 
                 print("Validation Epoch {}".format(epoch))
                 print(json.dumps(step_log, sort_keys=True, indent=4))
@@ -346,20 +404,6 @@ def train(config, device, eval_only=False):
                 data_logger=data_logger,
             )
 
-            #### move this code to rollout_with_stats function to log results one by one ####
-            # # summarize results from rollouts to tensorboard and terminal
-            # for env_name in all_rollout_logs:
-            #     rollout_logs = all_rollout_logs[env_name]
-            #     for k, v in rollout_logs.items():
-            #         if k.startswith("Time_"):
-            #             data_logger.record("Timing_Stats/Rollout_{}_{}".format(env_name, k[5:]), v, epoch)
-            #         else:
-            #             data_logger.record("Rollout/{}/{}".format(k, env_name), v, epoch, log_stats=True)
-
-            #     print("\nEpoch {} Rollouts took {}s (avg) with results:".format(epoch, rollout_logs["time"]))
-            #     print('Env: {}'.format(env_name))
-            #     print(json.dumps(rollout_logs, sort_keys=True, indent=4))
-
             # checkpoint and video saving logic
             updated_stats = TrainUtils.should_save_from_rollout_logs(
                 all_rollout_logs=all_rollout_logs,
@@ -405,12 +449,6 @@ def train(config, device, eval_only=False):
             print("MSE Log Epoch {}".format(epoch))
             print(json.dumps(mse_log, sort_keys=True, indent=4))
         
-        # # Only keep saved videos if the ckpt should be saved (but not because of validation score)
-        # should_save_video = (should_save_ckpt and (ckpt_reason != "valid")) or config.experiment.keep_all_videos
-        # if video_paths is not None and not should_save_video:
-        #     for env_name in video_paths:
-        #         os.remove(video_paths[env_name])
-
         # Save model checkpoints based on conditions (success rate, validation loss, etc)
         if should_save_ckpt:    
             TrainUtils.save_model(
@@ -422,6 +460,17 @@ def train(config, device, eval_only=False):
                 obs_normalization_stats=obs_normalization_stats,
                 action_normalization_stats=action_normalization_stats,
             )
+            
+            # Also save to previous ckpt folder
+            if config.experiment.ckpt_path is not None:
+                TrainUtils.save_model(
+                    model=model,
+                    config=config,
+                    env_meta=env_meta,
+                    shape_meta=shape_meta,
+                    ckpt_path=os.path.join(ckpt_dir_from_previous, epoch_ckpt_name_for_prev + ".pth"),
+                    obs_normalization_stats=obs_normalization_stats,
+                )
 
         # Finally, log memory usage in MB
         process = psutil.Process(os.getpid())
@@ -446,10 +495,26 @@ def main(args):
         config = config_factory(args.algo)
 
     if args.dataset is not None:
-        config.train.data = args.dataset
+        assert len(config.train.data) == 1 # if overriding dataset, only one dataset should be provided
+        config.train.data[0]["path"] = args.dataset
 
     if args.name is not None:
         config.experiment.name = args.name
+
+    if args.ckpt_path is not None:
+        config.experiment.ckpt_path = args.ckpt_path
+
+    """ For classifier training """
+    if args.pretrained_world_model is not None:
+        config.algo.dyn.load_ckpt = args.pretrained_world_model
+    
+    if args.classifier_ckpt is not None:
+        config.experiment.ckpt_path = args.classifier_ckpt
+    """ +++++++++++++++++++++++ """
+
+    if config.experiment.ckpt_path is not None:
+        # if loading some previous checkpoint, do not have warmup for lr.
+        config.algo.optim_params.policy.learning_rate.scheduler_type = "constant"
 
     # get torch device
     device = TorchUtils.get_torch_device(try_to_use_cuda=config.train.cuda)
@@ -534,5 +599,27 @@ if __name__ == "__main__":
         help="disables training and only runs policy evaluation. config must include ckpt_path"
     )
 
+    parser.add_argument(
+        "--ckpt_path",
+        type=str,
+        default=None,
+        help="(optional) if provided, override the dataset path defined in the config",
+    )
+    
+    """ For classifier training """
+    parser.add_argument(
+        "--pretrained_world_model",
+        type=str,
+        default=None,
+        help="(optional) if provided, override the dataset path defined in the config",
+    )
+    
+    parser.add_argument(
+        "--classifier_ckpt",
+        type=str,
+        default=None,
+        help="(optional) if provided, override the dataset path defined in the config",
+    )
+    
     args = parser.parse_args()
     main(args)

@@ -217,6 +217,12 @@ def create_env_from_metadata(
     """
     if env_name is None:
         env_name = env_meta["env_name"]
+        if env_meta["env_name"].startswith("MG_"):
+            env_meta["env_name"] = env_meta["env_name"][3:]
+        
+    if env_name.startswith("MG_"):
+        env_name = env_name[3:]
+        
     env_type = get_env_type(env_meta=env_meta)
     env_kwargs = env_meta["env_kwargs"]
     env_kwargs["env_name"] = env_name

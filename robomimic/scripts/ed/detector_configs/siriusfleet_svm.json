@@ -1,0 +1,8 @@
+{
+    "threshold": 0,
+    "demos_embedding_path": "",
+    "svm_config": {
+        "nu": 0.1,
+        "kernel": "rbf"
+    }
+}

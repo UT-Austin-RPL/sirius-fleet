@@ -233,6 +233,49 @@ def backprop_for_loss(net, optim, loss, max_grad_norm=None, retain_graph=False):
 
     return grad_norms
 
+def backprop_for_loss_dict(net, optimizers, loss, max_grad_norm=None, retain_graph=False):
+    """
+    Backpropagate loss and update parameters for network with
+    name @name.
+    This function is used for backpropagation for a dict of optimzers.
+
+    Args:
+        net (torch.nn.Module): network to update
+
+        optim (torch.optim.Optimizer): optimizer to use
+
+        loss (torch.Tensor): loss to use for backpropagation
+
+        max_grad_norm (float): if provided, used to clip gradients
+
+        retain_graph (bool): if True, graph is not freed after backward call
+
+    Returns:
+        grad_norms (float): average gradient norms from backpropagation
+    """
+
+    # backprop
+    for k in optimizers:
+        optimizers[k].zero_grad()
+        
+    loss.backward(retain_graph=retain_graph)
+
+    # gradient clipping
+    if max_grad_norm is not None:
+        torch.nn.utils.clip_grad_norm_(net.parameters(), max_grad_norm)
+
+    # compute grad norms
+    grad_norms = 0.
+    for p in net.parameters():
+        # only clip gradients for parameters for which requires_grad is True
+        if p.grad is not None:
+            grad_norms += p.grad.data.norm(2).pow(2).item()
+
+    # step
+    for k in optimizers:
+        optimizers[k].step()
+
+    return grad_norms
 
 def rot_6d_to_axis_angle(rot_6d):
     """

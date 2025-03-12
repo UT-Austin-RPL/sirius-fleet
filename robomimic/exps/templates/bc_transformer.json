@@ -32,7 +32,7 @@
             "n": 50,
             "horizon": 400,
             "rate": 50,
-            "warmstart": 0,
+            "warmstart": 400,
             "terminate_on_success": true
         }
     },
@@ -113,8 +113,7 @@
                 "low_dim": [
                     "robot0_eef_pos",
                     "robot0_eef_quat",
-                    "robot0_gripper_qpos",
-                    "object"
+                    "robot0_gripper_qpos"
                 ],
                 "rgb": [],
                 "depth": [],

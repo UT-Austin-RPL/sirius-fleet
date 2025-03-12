@@ -22,7 +22,7 @@ from robomimic.utils.python_utils import extract_class_init_kwargs_from_dict
 import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.obs_utils as ObsUtils
 from robomimic.models.base_nets import Module, Sequential, MLP, RNN_Base, ResNet18Conv, SpatialSoftmax, \
-    FeatureAggregator
+    FeatureAggregator, ResidualMLP
 from robomimic.models.obs_core import VisualCore, Randomizer, VisualCoreLanguageConditioned
 from robomimic.models.transformers import PositionalEncoding, GPT_Backbone
 from robomimic.macros import LANG_EMB_KEY
@@ -323,6 +323,7 @@ class ObservationDecoder(Module):
         self,
         decode_shapes,
         input_feat_dim,
+        image_output_activation=None,
     ):
         """
         Args:
@@ -341,6 +342,8 @@ class ObservationDecoder(Module):
             self.obs_shapes[k] = decode_shapes[k]
 
         self.input_feat_dim = input_feat_dim
+        self.image_output_activation = image_output_activation
+        
         self._create_layers()
 
     def _create_layers(self):
@@ -350,7 +353,16 @@ class ObservationDecoder(Module):
         self.nets = nn.ModuleDict()
         for k in self.obs_shapes:
             layer_out_dim = int(np.prod(self.obs_shapes[k]))
-            self.nets[k] = nn.Linear(self.input_feat_dim, layer_out_dim)
+            
+            if "image" in k:
+                if self.image_output_activation is None:
+                    self.nets[k] = nn.Linear(self.input_feat_dim, layer_out_dim)
+                else:
+                    layers = [nn.Linear(self.input_feat_dim, layer_out_dim)]
+                    layers.append(self.image_output_activation())
+                    self.nets[k] = nn.Sequential(*layers)
+            else:
+                self.nets[k] = nn.Linear(self.input_feat_dim, layer_out_dim)
 
     def output_shape(self, input_shape=None):
         """
@@ -520,6 +532,11 @@ class MIMO_MLP(Module):
         layer_func=nn.Linear, 
         activation=nn.ReLU,
         encoder_kwargs=None,
+        use_res_mlp=False,
+        res_mlp_kwargs=None,
+        image_output_activation=None,
+        no_encoder=False,
+        no_encoder_input_dim=None, # not used by default
     ):
         """
         Args:
@@ -574,21 +591,44 @@ class MIMO_MLP(Module):
         # flat encoder output dimension
         mlp_input_dim = self.nets["encoder"].output_shape()[0]
 
-        # intermediate MLP layers
-        self.nets["mlp"] = MLP(
-            input_dim=mlp_input_dim,
-            output_dim=layer_dims[-1],
-            layer_dims=layer_dims[:-1],
-            layer_func=layer_func,
-            activation=activation,
-            output_activation=activation, # make sure non-linearity is applied before decoder
-        )
+        self.no_encoder = no_encoder
+        if self.no_encoder:
+            self.nets["encoder"] = None # not used 
+            mlp_input_dim = no_encoder_input_dim
 
-        # decoder for output modalities
-        self.nets["decoder"] = ObservationDecoder(
-            decode_shapes=self.output_shapes,
-            input_feat_dim=layer_dims[-1],
-        )
+        # intermediate MLP layers
+        if use_res_mlp:
+            self.nets["mlp"] = ResidualMLP(
+                input_dim=mlp_input_dim,
+                activation=activation,
+                output_activation=None,
+                **res_mlp_kwargs
+            )
+        else:
+            if layer_dims[0] > 0:
+                # intermediate MLP layers
+                self.nets["mlp"] = MLP(
+                    input_dim=mlp_input_dim,
+                    output_dim=layer_dims[-1],
+                    layer_dims=layer_dims[:-1],
+                    layer_func=layer_func,
+                    activation=activation,
+                    output_activation=activation, # make sure non-linearity is applied before decoder
+                )
+        
+        if layer_dims[0] > 0:
+            # decoder for output modalities
+            self.nets["decoder"] = ObservationDecoder(
+                decode_shapes=self.output_shapes,
+                input_feat_dim=(res_mlp_kwargs['hidden_dim'] if use_res_mlp else layer_dims[-1]),
+                image_output_activation=image_output_activation,
+            )
+        else:
+            self.nets["decoder"] = ObservationDecoder(
+                decode_shapes=self.output_shapes,
+                input_feat_dim=(mlp_input_dim),
+                image_output_activation=image_output_activation,
+            )
 
     def output_shape(self, input_shape=None):
         """
@@ -611,7 +651,10 @@ class MIMO_MLP(Module):
             outputs (dict): dictionary of output torch.Tensors, that corresponds
                 to @self.output_shapes
         """
-        enc_outputs = self.nets["encoder"](**inputs)
+        if self.no_encoder:
+            enc_outputs = inputs["inputs"]
+        else:
+            enc_outputs = self.nets["encoder"](**inputs)      
         mlp_out = self.nets["mlp"](enc_outputs)
         return self.nets["decoder"](mlp_out)
 
@@ -657,6 +700,7 @@ class RNN_MIMO_MLP(Module):
         mlp_layer_func=nn.Linear,
         per_step=True,
         encoder_kwargs=None,
+        image_output_activation=None,
     ):
         """
         Args:
@@ -734,6 +778,7 @@ class RNN_MIMO_MLP(Module):
             self.nets["decoder"] = ObservationDecoder(
                 decode_shapes=self.output_shapes,
                 input_feat_dim=mlp_layer_dims[-1],
+                image_output_activation=image_output_activation,
             )
             if self.per_step:
                 per_step_net = Sequential(self.nets["mlp"], self.nets["decoder"])
@@ -741,6 +786,7 @@ class RNN_MIMO_MLP(Module):
             self.nets["decoder"] = ObservationDecoder(
                 decode_shapes=self.output_shapes,
                 input_feat_dim=rnn_output_dim,
+                image_output_activation=image_output_activation,
             )
             if self.per_step:
                 per_step_net = self.nets["decoder"]
@@ -885,6 +931,219 @@ class RNN_MIMO_MLP(Module):
         return msg
 
 
+class MIMO_Transformer_Dyn(Module):
+    """
+    Extension to Transformer (based on GPT architecture) to accept multiple observation 
+    dictionaries as input and to output dictionaries of tensors. Inputs are specified as 
+    a dictionary of observation dictionaries, with each key corresponding to an observation group.
+    This module utilizes @ObservationGroupEncoder to process the multiple input dictionaries and
+    @ObservationDecoder to generate tensor dictionaries. The default behavior
+    for encoding the inputs is to process visual inputs with a learned CNN and concatenating
+    the flat encodings with the other flat inputs. The default behavior for generating 
+    outputs is to use a linear layer branch to produce each modality separately
+    (including visual outputs).
+    """
+    def __init__(
+        self,
+        input_dim,
+        output_shapes,
+        transformer_embed_dim,
+        transformer_num_layers,
+        transformer_num_heads,
+        transformer_context_length,
+        transformer_causal,
+        transformer_emb_dropout=0.1,
+        transformer_attn_dropout=0.1,
+        transformer_block_output_dropout=0.1,
+        transformer_sinusoidal_embedding=False,
+        transformer_activation="gelu",
+        transformer_nn_parameter_for_timesteps=False,
+        encoder_kwargs=None,
+        image_output_activation=None,
+    ):
+        """
+        Args:
+            input_obs_group_shapes (OrderedDict): a dictionary of dictionaries.
+                Each key in this dictionary should specify an observation group, and
+                the value should be an OrderedDict that maps modalities to
+                expected shapes.
+            output_shapes (OrderedDict): a dictionary that maps modality to
+                expected shapes for outputs.
+            transformer_embed_dim (int): dimension for embeddings used by transformer
+            transformer_num_layers (int): number of transformer blocks to stack
+            transformer_num_heads (int): number of attention heads for each
+                transformer block - must divide @transformer_embed_dim evenly. Self-attention is 
+                computed over this many partitions of the embedding dimension separately.
+            transformer_context_length (int): expected length of input sequences
+            transformer_causal (bool): whether to use causal transformer layers
+            transformer_activation: non-linearity for input and output layers used in transformer
+            transformer_emb_dropout (float): dropout probability for embedding inputs in transformer
+            transformer_attn_dropout (float): dropout probability for attention outputs for each transformer block
+            transformer_block_output_dropout (float): dropout probability for final outputs for each transformer block
+            encoder_kwargs (dict): observation encoder config
+        """
+        super(MIMO_Transformer_Dyn, self).__init__()
+        
+        # assert isinstance(input_obs_group_shapes, OrderedDict)
+        # assert np.all([isinstance(input_obs_group_shapes[k], OrderedDict) for k in input_obs_group_shapes])
+        # assert isinstance(output_shapes, OrderedDict)
+
+        # self.input_obs_group_shapes = input_obs_group_shapes
+        self.output_shapes = output_shapes
+
+        self.nets = nn.ModuleDict()
+        self.params = nn.ParameterDict()
+
+        # flat encoder output dimension
+        transformer_input_dim = input_dim # TODO: need to check
+        self.nets["embed_encoder"] = nn.Linear(
+            transformer_input_dim, transformer_embed_dim
+        )
+
+        max_timestep = transformer_context_length
+
+        if transformer_sinusoidal_embedding:
+            self.nets["embed_timestep"] = PositionalEncoding(transformer_embed_dim)
+        elif transformer_nn_parameter_for_timesteps:
+            assert (
+                not transformer_sinusoidal_embedding
+            ), "nn.Parameter only works with learned embeddings"
+            self.params["embed_timestep"] = nn.Parameter(
+                torch.zeros(1, max_timestep, transformer_embed_dim)
+            )
+        else:
+            self.nets["embed_timestep"] = nn.Embedding(max_timestep, transformer_embed_dim)
+
+        # layer norm for embeddings
+        self.nets["embed_ln"] = nn.LayerNorm(transformer_embed_dim)
+        
+        # dropout for input embeddings
+        self.nets["embed_drop"] = nn.Dropout(transformer_emb_dropout)
+
+        # GPT transformer
+        self.nets["transformer"] = GPT_Backbone(
+            embed_dim=transformer_embed_dim,
+            num_layers=transformer_num_layers,
+            num_heads=transformer_num_heads,
+            context_length=transformer_context_length,
+            causal=transformer_causal,
+            attn_dropout=transformer_attn_dropout,
+            block_output_dropout=transformer_block_output_dropout,
+            activation=transformer_activation,
+        )
+
+        # decoder for output modalities
+        self.nets["decoder"] = ObservationDecoder(
+            decode_shapes=self.output_shapes,
+            input_feat_dim=transformer_embed_dim,
+            image_output_activation=image_output_activation,
+        )
+
+        self.transformer_context_length = transformer_context_length
+        self.transformer_embed_dim = transformer_embed_dim
+        self.transformer_sinusoidal_embedding = transformer_sinusoidal_embedding
+        self.transformer_nn_parameter_for_timesteps = transformer_nn_parameter_for_timesteps
+
+    def output_shape(self, input_shape=None):
+        """
+        Returns output shape for this module, which is a dictionary instead
+        of a list since outputs are dictionaries.
+        """
+        return { k : list(self.output_shapes[k]) for k in self.output_shapes }
+
+    def embed_timesteps(self, embeddings):
+        """
+        Computes timestep-based embeddings (aka positional embeddings) to add to embeddings.
+        Args:
+            embeddings (torch.Tensor): embeddings prior to positional embeddings are computed
+        Returns:
+            time_embeddings (torch.Tensor): positional embeddings to add to embeddings
+        """
+        timesteps = (
+            torch.arange(
+                0,
+                embeddings.shape[1],
+                dtype=embeddings.dtype,
+                device=embeddings.device,
+            )
+            .unsqueeze(0)
+            .repeat(embeddings.shape[0], 1)
+        )
+        assert (timesteps >= 0.0).all(), "timesteps must be positive!"
+        if self.transformer_sinusoidal_embedding:
+            assert torch.is_floating_point(timesteps), timesteps.dtype
+        else:
+            timesteps = timesteps.long()
+
+        if self.transformer_nn_parameter_for_timesteps:
+            time_embeddings = self.params["embed_timestep"]
+        else:
+            time_embeddings = self.nets["embed_timestep"](
+                timesteps
+            )  # these are NOT fed into transformer, only added to the inputs.
+            # compute how many modalities were combined into embeddings, replicate time embeddings that many times
+            num_replicates = embeddings.shape[-1] // self.transformer_embed_dim
+            time_embeddings = torch.cat([time_embeddings for _ in range(num_replicates)], -1)
+            assert (
+                embeddings.shape == time_embeddings.shape
+            ), f"{embeddings.shape}, {time_embeddings.shape}"
+        return time_embeddings
+
+    def input_embedding(
+        self,
+        inputs,
+    ):
+        """
+        Process encoded observations into embeddings to pass to transformer,
+        Adds timestep-based embeddings (aka positional embeddings) to inputs.
+        Args:
+            inputs (torch.Tensor): outputs from observation encoder
+        Returns:
+            embeddings (torch.Tensor): input embeddings to pass to transformer backbone.
+        """
+        embeddings = self.nets["embed_encoder"](inputs)
+        time_embeddings = self.embed_timesteps(embeddings)
+        embeddings = embeddings + time_embeddings
+        embeddings = self.nets["embed_ln"](embeddings)
+        embeddings = self.nets["embed_drop"](embeddings)
+
+        return embeddings
+
+    def forward(self, transformer_inputs):
+        transformer_encoder_outputs = None
+        if transformer_encoder_outputs is None:
+            transformer_embeddings = self.input_embedding(transformer_inputs)
+            # pass encoded sequences through transformer
+            transformer_encoder_outputs = self.nets["transformer"].forward(transformer_embeddings)
+
+        transformer_outputs = transformer_encoder_outputs
+        # apply decoder to each timestep of sequence to get a dictionary of outputs
+        transformer_outputs = TensorUtils.time_distributed(
+            transformer_outputs, self.nets["decoder"]
+        )
+        transformer_outputs["transformer_encoder_outputs"] = transformer_encoder_outputs
+        return transformer_outputs 
+
+    def _to_string(self):
+        """
+        Subclasses should override this method to print out info about network / policy.
+        """
+        return ''
+
+    def __repr__(self):
+        """Pretty print network."""
+        header = '{}'.format(str(self.__class__.__name__))
+        msg = ''
+        indent = ' ' * 4
+        if self._to_string() != '':
+            msg += textwrap.indent("\n" + self._to_string() + "\n", indent)
+        # msg += textwrap.indent("\nencoder={}".format(self.nets["encoder"]), indent)
+        msg += textwrap.indent("\n\ntransformer={}".format(self.nets["transformer"]), indent)
+        msg += textwrap.indent("\n\ndecoder={}".format(self.nets["decoder"]), indent)
+        msg = header + '(' + msg + '\n)'
+        return msg
+
+
 class MIMO_Transformer(Module):
     """
     Extension to Transformer (based on GPT architecture) to accept multiple observation 
@@ -913,6 +1172,7 @@ class MIMO_Transformer(Module):
         transformer_activation="gelu",
         transformer_nn_parameter_for_timesteps=False,
         encoder_kwargs=None,
+        image_output_activation=None,
     ):
         """
         Args:
@@ -996,6 +1256,7 @@ class MIMO_Transformer(Module):
         self.nets["decoder"] = ObservationDecoder(
             decode_shapes=self.output_shapes,
             input_feat_dim=transformer_embed_dim,
+            image_output_activation=image_output_activation,
         )
 
         self.transformer_context_length = transformer_context_length
@@ -1110,6 +1371,51 @@ class MIMO_Transformer(Module):
         )
         transformer_outputs["transformer_encoder_outputs"] = transformer_encoder_outputs
         return transformer_outputs
+
+    def forward_embedding(self, **inputs):
+        """
+        Process each set of inputs in its own observation group.
+        Args:
+            inputs (dict): a dictionary of dictionaries with one dictionary per
+                observation group. Each observation group's dictionary should map
+                modality to torch.Tensor batches. Should be consistent with
+                @self.input_obs_group_shapes. First two leading dimensions should
+                be batch and time [B, T, ...] for each tensor.
+        Returns:
+            outputs (dict): dictionary of output torch.Tensors, that corresponds
+                to @self.output_shapes. Leading dimensions will be batch and time [B, T, ...]
+                for each tensor.
+        """
+        for obs_group in self.input_obs_group_shapes:
+            for k in self.input_obs_group_shapes[obs_group]:
+                # first two dimensions should be [B, T] for inputs
+                if inputs[obs_group][k] is None:
+                    continue
+                assert inputs[obs_group][k].ndim - 2 == len(self.input_obs_group_shapes[obs_group][k])
+
+        inputs = inputs.copy()
+    
+        transformer_inputs = TensorUtils.time_distributed(
+            inputs, self.nets["encoder"], inputs_as_kwargs=True
+        )
+        assert transformer_inputs.ndim == 3  # [B, T, D]
+        
+        return transformer_inputs
+        
+    def forward_output(self, transformer_inputs):
+        transformer_encoder_outputs = None
+        if transformer_encoder_outputs is None:
+            transformer_embeddings = self.input_embedding(transformer_inputs)
+            # pass encoded sequences through transformer
+            transformer_encoder_outputs = self.nets["transformer"].forward(transformer_embeddings)
+
+        transformer_outputs = transformer_encoder_outputs
+        # apply decoder to each timestep of sequence to get a dictionary of outputs
+        transformer_outputs = TensorUtils.time_distributed(
+            transformer_outputs, self.nets["decoder"]
+        )
+        transformer_outputs["transformer_encoder_outputs"] = transformer_encoder_outputs
+        return transformer_outputs 
 
     def _to_string(self):
         """

@@ -86,11 +86,6 @@ def extract_trajectory(
     env.reset()
     obs = env.reset_to(initial_state)
 
-    ep_meta = json.loads(initial_state["ep_meta"])
-    # hack: add the cam configs in, since it's been modified
-    ep_meta["cam_configs"] = deepcopy(env.env._cam_configs)
-    initial_state["ep_meta"] = json.dumps(ep_meta, indent=4)
-
     traj = dict(
         obs=[], 
         next_obs=[], 
@@ -129,6 +124,8 @@ def extract_trajectory(
         done = int(done)
 
         # get the absolute action
+        robot = env.base_env.robots[0]
+        robot.control(actions[t], policy_step=True)
         action_abs = env.base_env.convert_rel_to_abs_action(actions[t])
 
         # collect transition
@@ -202,9 +199,8 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
                     # episode metadata
                     if is_robosuite_env:
                         ep_data_grp.attrs["model_file"] = traj["initial_state_dict"]["model"] # model xml for this episode
-                        ep_data_grp.attrs["ep_meta"] = traj["initial_state_dict"]["ep_meta"] # ep meta data for this episode
-                    # if "ep_meta" in f["data/{}".format(ep)].attrs:
-                    #     ep_data_grp.attrs["ep_meta"] = f["data/{}".format(ep)].attrs["ep_meta"]
+                    if "ep_meta" in f["data/{}".format(ep)].attrs:
+                        ep_data_grp.attrs["ep_meta"] = f["data/{}".format(ep)].attrs["ep_meta"]
                     ep_data_grp.attrs["num_samples"] = traj["actions"].shape[0] # number of transitions in this episode
                     
                     total_samples.value += traj["actions"].shape[0]

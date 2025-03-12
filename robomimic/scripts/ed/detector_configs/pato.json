@@ -1,0 +1,4 @@
+{
+    "vae_threshold": 0.005,
+    "ens_threshold": 0.1
+}

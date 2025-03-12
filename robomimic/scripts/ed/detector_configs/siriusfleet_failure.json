@@ -1,0 +1,7 @@
+{
+    "threshold": 0.6,
+    "eval_method": "idx",
+    "eval_idx": 4,
+    "threhold_history": 10,
+    "threshold_count": 5
+}

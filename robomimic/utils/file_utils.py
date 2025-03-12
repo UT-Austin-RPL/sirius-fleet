@@ -51,7 +51,7 @@ def create_hdf5_filter_key(hdf5_path, demo_keys, key_name):
     for ep in demos:
         ep_data_grp = f["data/{}".format(ep)]
         if ep in demo_keys:
-            ep_lengths.append(ep_data_grp.attrs["num_samples"])
+            ep_lengths.append(len(ep_data_grp["actions"][()]))
 
     # store list of filtered keys under mask group
     k = "mask/{}".format(key_name)
@@ -102,6 +102,9 @@ def get_env_metadata_from_dataset(dataset_path, ds_format="robomimic"):
         env_meta = json.loads(f["data"].attrs["env_args"])
     elif ds_format == "r2d2":
         env_meta = dict(f.attrs)
+    elif ds_format == "mutex":
+        env_meta = dict(f.attrs)
+        env_meta["env_name"]="mutex"
     else:
         raise ValueError
     f.close()
@@ -134,7 +137,7 @@ def get_shape_metadata_from_dataset(dataset_path, action_keys, all_obs_keys=None
     dataset_path = os.path.expanduser(dataset_path)
     f = h5py.File(dataset_path, "r")
     
-    if ds_format == "robomimic":
+    if ds_format == "robomimic" or ds_format == "mutex":
         demo_id = list(f["data"].keys())[0]
         demo = f["data/{}".format(demo_id)]
         

@@ -8,6 +8,7 @@ import os
 
 import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.obs_utils as ObsUtils
+import cv2
 
 
 def image_tensor_to_numpy(image):
@@ -144,3 +145,9 @@ def make_model_prediction_plot(
     plt.close()
     plt.cla()
     plt.clf()
+
+def apply_filter(frame, color):
+    color_mask = np.zeros_like(frame)
+    color_mask[:] = color
+    frame = cv2.addWeighted(frame, 0.7, color_mask, 0.3, 0)
+    return frame

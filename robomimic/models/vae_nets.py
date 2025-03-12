@@ -17,7 +17,8 @@ import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.torch_utils as TorchUtils
 from robomimic.models.base_nets import Module
 from robomimic.models.obs_nets import MIMO_MLP
-
+from robomimic.models.obs_nets import MIMO_Transformer_Dyn
+import robomimic.models.base_nets as BaseNets
 
 def vae_args_from_config(vae_config):
     """
@@ -40,6 +41,26 @@ def vae_args_from_config(vae_config):
         prior_use_categorical=vae_config.prior.use_categorical,
         prior_categorical_dim=vae_config.prior.categorical_dim,
         prior_categorical_gumbel_softmax_hard=vae_config.prior.categorical_gumbel_softmax_hard,
+    )
+    return vae_args
+
+
+def vae_args_from_config_dyn(vae_config):
+    """
+    Generate a set of VAE args that are read from the VAE-specific part
+    of a config (for example see `config.algo.vae` in BCConfig).
+    """
+    vae_args = dict(
+        latent_dim=vae_config.latent_dim,
+        decoder_is_conditioned=vae_config.decoder.is_conditioned,
+        decoder_reconstruction_sum_across_elements=vae_config.decoder.reconstruction_sum_across_elements,
+        latent_clip=vae_config.latent_clip,
+        prior_learn=vae_config.prior.learn,
+        prior_is_conditioned=vae_config.prior.is_conditioned,
+        prior_layer_dims=vae_config.prior_layer_dims,
+        prior_use_gmm=vae_config.prior.use_gmm,
+        prior_gmm_num_modes=vae_config.prior.gmm_num_modes,
+        prior_gmm_learn_weights=vae_config.prior.gmm_learn_weights,
     )
     return vae_args
 
@@ -744,6 +765,711 @@ class CategoricalPrior(Prior):
         return msg
 
 
+class Prior_Transformer(Module):
+    """
+    Base class for VAE priors. It's basically the same as a @MIMO_MLP network (it
+    instantiates one) but it supports additional methods such as KL loss computation 
+    and sampling, and also may learn prior parameters as observation-independent 
+    torch Parameters instead of observation-dependent mappings.
+    """
+    def __init__(
+        self,
+        param_shapes,
+        param_obs_dependent,
+        input_dim=None,
+        mlp_layer_dims=(),
+        goal_shapes=None,
+        encoder_kwargs=None,
+        algo_configs_transformer=None,
+    ):
+        """
+        Args:
+            param_shapes (OrderedDict): a dictionary that maps modality to
+                expected shapes for parameters that determine the prior
+                distribution.
+
+            param_obs_dependent (OrderedDict): a dictionary with boolean
+                values consistent with @param_shapes which determines whether
+                to learn parameters as part of the (obs-dependent) network or 
+                directly as learnable parameters.
+
+            input_dim (int): a dictionary that maps modality to
+                expected shapes for observations.
+
+            mlp_layer_dims ([int]): sequence of integers for the MLP hidden layer sizes
+
+            goal_shapes (OrderedDict): a dictionary that maps modality to
+                expected shapes for goal observations.
+
+            encoder_kwargs (dict or None): If None, results in default encoder_kwargs being applied. Otherwise, should
+                be nested dictionary containing relevant per-modality information for encoder networks.
+                Should be of form:
+
+                obs_modality1: dict
+                    feature_dimension: int
+                    core_class: str
+                    core_kwargs: dict
+                        ...
+                        ...
+                    obs_randomizer_class: str
+                    obs_randomizer_kwargs: dict
+                        ...
+                        ...
+                obs_modality2: dict
+                    ...
+        """
+        super(Prior_Transformer, self).__init__()
+
+        assert isinstance(param_shapes, OrderedDict) and isinstance(param_obs_dependent, OrderedDict)
+        assert set(param_shapes.keys()) == set(param_obs_dependent.keys())
+        self.param_shapes = param_shapes
+        self.param_obs_dependent = param_obs_dependent
+
+        self.algo_configs_transformer = algo_configs_transformer
+
+        net_kwargs = dict(
+            input_dim=input_dim,
+            mlp_layer_dims=mlp_layer_dims,
+            goal_shapes=goal_shapes,
+            encoder_kwargs=encoder_kwargs,
+            algo_configs_transformer=algo_configs_transformer,
+        )
+        self._create_layers(net_kwargs)
+
+    def _create_layers(self, net_kwargs):
+        """
+        Create networks and parameters needed by the prior.
+        """
+        self.prior_params = nn.ParameterDict()
+
+        self._is_obs_dependent = False
+        mlp_output_shapes = OrderedDict()
+        for pp in self.param_shapes:
+            if self.param_obs_dependent[pp]:
+                # prior parameters will be a function of observations using a network
+                mlp_output_shapes[pp] = self.param_shapes[pp]
+            else:
+                # learnable prior parameters independent of observation
+                param_init = torch.randn(*self.param_shapes[pp]) / np.sqrt(np.prod(self.param_shapes[pp]))
+                self.prior_params[pp] = torch.nn.Parameter(param_init)
+
+        # only make networks if we have obs-dependent prior parameters
+        self.prior_module = None
+        if len(mlp_output_shapes) > 0:
+            self._is_obs_dependent = True
+            input_dim = net_kwargs["input_dim"]
+            algo_configs_transformer = net_kwargs["algo_configs_transformer"]
+            
+            self.prior_module = MIMO_Transformer_Dyn(
+                input_dim=input_dim,
+                output_shapes=mlp_output_shapes,
+                **BaseNets.transformer_args_from_config(algo_configs_transformer),
+                )
+
+    def sample(self, n, obs_dict=None, goal_dict=None):
+        """
+        Returns a batch of samples from the prior distribution.
+
+        Args:
+            n (int): this argument is used to specify the number
+                of samples to generate from the prior.
+
+            obs_dict (dict): inputs according to @obs_shapes. Only needs to be provided
+                if any prior parameters are obs-dependent. Leading dimension should
+                be consistent with @n, the number of samples to generate.
+
+            goal_dict (dict): inputs according to @goal_shapes (only if using goal observations)
+
+        Returns:
+            z (torch.Tensor): batch of sampled latent vectors.
+        """
+        raise NotImplementedError
+
+    def kl_loss(self, posterior_params, z=None, obs_dict=None, goal_dict=None):
+        """
+        Computes sample-based KL divergence loss between the Gaussian distribution
+        given by @mu, @logvar and the prior distribution. 
+
+        Args:
+            posterior_params (dict): dictionary with keys "mu" and "logvar" corresponding
+                to torch.Tensor batch of means and log-variances of posterior Gaussian
+                distribution.
+
+            z (torch.Tensor): samples from the Gaussian distribution parametrized by
+                @mu and @logvar. May not be needed depending on the prior.
+
+            obs_dict (dict): inputs according to @obs_shapes. Only needs to be provided
+                if any prior parameters are obs-dependent.
+
+            goal_dict (dict): inputs according to @goal_shapes (only if using goal observations)
+
+        Returns:
+            kl_loss (torch.Tensor): KL divergence loss
+        """
+        raise NotImplementedError
+
+    def output_shape(self, input_shape=None):
+        """
+        Returns output shape for this module, which is a dictionary instead
+        of a list since outputs are dictionaries.
+        """
+        if self.prior_module is not None:
+            return self.prior_module.output_shape(input_shape)
+        return { k : list(self.param_shapes[k]) for k in self.param_shapes }
+
+    def forward(self, batch_size, obs_dict=None, goal_dict=None):
+        """
+        Computes prior parameters.
+
+        Args:
+            batch_size (int): batch size - this is needed for parameters that are
+                not obs-dependent, to make sure the leading dimension is correct
+                for downstream sampling and loss computation purposes
+
+            obs_dict (dict): inputs according to @obs_shapes. Only needs to be provided
+                if any prior parameters are obs-dependent.
+
+            goal_dict (dict): inputs according to @goal_shapes (only if using goal observations)
+
+        Returns:
+            prior_params (dict): dictionary containing prior parameters
+        """
+        prior_params = dict()
+        if self._is_obs_dependent:
+            # forward through network for obs-dependent params
+            prior_params = self.prior_module.forward(obs_dict)
+
+        # return params that do not depend on obs as well
+        for pp in self.param_shapes:
+            if not self.param_obs_dependent[pp]:
+                # ensure leading dimension will be consistent with other params
+                prior_params[pp] = TensorUtils.expand_at(self.prior_params[pp], size=batch_size, dim=0)
+
+        # ensure leading dimensions are all consistent
+        TensorUtils.assert_size_at_dim(prior_params, size=batch_size, dim=0, 
+                msg="prior params dim 0 mismatch in forward")
+
+        return prior_params
+
+
+class GaussianPrior_Transformer(Prior_Transformer):
+    """
+    A class that holds functionality for learning both unimodal Gaussian priors and
+    multimodal Gaussian Mixture Model priors for use in VAEs.
+    """
+    def __init__(
+        self,
+        latent_dim,
+        device,
+        latent_clip=None,
+        learnable=False,
+        use_gmm=False,
+        gmm_num_modes=10,
+        gmm_learn_weights=False,
+        input_dim=None,
+        mlp_layer_dims=(),
+        goal_shapes=None,
+        encoder_kwargs=None,
+        algo_configs_transformer=None,
+    ):
+        """
+        Args:
+            latent_dim (int): size of latent dimension for the prior
+
+            device (torch.Device): where the module should live (i.e. cpu, gpu)
+
+            latent_clip (float): if provided, clip all latents sampled at
+                test-time in each dimension to (-@latent_clip, @latent_clip)
+
+            learnable (bool): if True, learn the parameters of the prior (as opposed
+                to a default N(0, 1) prior)
+
+            use_gmm (bool): if True, learn a Gaussian Mixture Model (GMM)
+                prior instead of a unimodal Gaussian prior. To use this option,
+                @learnable must be set to True.
+
+            gmm_num_modes (int): number of GMM modes to learn. Only
+                used if @use_gmm is True.
+
+            gmm_learn_weights (bool): if True, learn the weights of the GMM
+                model instead of setting them to be uniform across all the modes.
+                Only used if @use_gmm is True.
+
+            input_dim (int): a dictionary that maps modality to
+                expected shapes for observations. If provided, assumes that
+                the prior should depend on observation inputs, and networks 
+                will be created to output prior parameters.
+
+            mlp_layer_dims ([int]): sequence of integers for the MLP hidden layer sizes
+
+            goal_shapes (OrderedDict): a dictionary that maps modality to
+                expected shapes for goal observations.
+
+            encoder_kwargs (dict or None): If None, results in default encoder_kwargs being applied. Otherwise, should
+                be nested dictionary containing relevant per-modality information for encoder networks.
+                Should be of form:
+
+                obs_modality1: dict
+                    feature_dimension: int
+                    core_class: str
+                    core_kwargs: dict
+                        ...
+                        ...
+                    obs_randomizer_class: str
+                    obs_randomizer_kwargs: dict
+                        ...
+                        ...
+                obs_modality2: dict
+                    ...
+        """
+        self.device = device
+        self.latent_dim = latent_dim
+        self.latent_clip = latent_clip
+        self.learnable = learnable
+
+        self.use_gmm = use_gmm
+        if self.use_gmm:
+            self.num_modes = gmm_num_modes
+        else:
+            # unimodal Gaussian prior
+            self.num_modes = 1
+        self.gmm_learn_weights = gmm_learn_weights
+
+        self._input_dependent = input_dim is not None and input_dim > 0 # (obs_shapes is not None) and (len(obs_shapes) > 0)
+
+        if self._input_dependent:
+            assert learnable
+            # assert isinstance(obs_shapes, OrderedDict)
+
+            # network will generate mean and logvar
+            param_shapes = OrderedDict(
+                mean=(self.num_modes, self.latent_dim,),
+                logvar=(self.num_modes, self.latent_dim,),
+            )
+            param_obs_dependent = OrderedDict(mean=True, logvar=True)
+
+            if self.use_gmm and self.gmm_learn_weights:
+                # network generates GMM weights
+                param_shapes["weight"] = (self.num_modes,)
+                param_obs_dependent["weight"] = True
+        else:
+            # learn obs-indep mean / logvar
+            param_shapes = OrderedDict(
+                mean=(1, self.num_modes, self.latent_dim),
+                logvar=(1, self.num_modes, self.latent_dim),
+            )
+            param_obs_dependent = OrderedDict(mean=False, logvar=False)
+
+            if self.use_gmm and self.gmm_learn_weights:
+                # learn obs-indep GMM weights
+                param_shapes["weight"] = (1, self.num_modes)
+                param_obs_dependent["weight"] = False
+
+        super(GaussianPrior_Transformer, self).__init__(
+            param_shapes=param_shapes,
+            param_obs_dependent=param_obs_dependent,
+            input_dim=input_dim,
+            mlp_layer_dims=mlp_layer_dims,
+            goal_shapes=goal_shapes,
+            encoder_kwargs=encoder_kwargs,
+            algo_configs_transformer=algo_configs_transformer,
+        )
+
+    def _create_layers(self, net_kwargs):
+        """
+        Update from superclass to only create parameters / networks if not using
+        N(0, 1) Gaussian prior.
+        """
+        if self.learnable:
+            super(GaussianPrior_Transformer, self)._create_layers(net_kwargs)
+
+    def sample(self, n, obs_dict=None, goal_dict=None):
+        """
+        Returns a batch of samples from the prior distribution.
+
+        Args:
+            n (int): this argument is used to specify the number
+                of samples to generate from the prior.
+
+            obs_dict (dict): inputs according to @input_dim. Only needs to be provided
+                if any prior parameters are obs-dependent. Leading dimension should
+                be consistent with @n, the number of samples to generate.
+
+            goal_dict (dict): inputs according to @goal_shapes (only if using goal observations)
+
+        Returns:
+            z (torch.Tensor): batch of sampled latent vectors.
+        """
+
+        # check consistency between n and obs_dict
+        if self._input_dependent:
+            TensorUtils.assert_size_at_dim(obs_dict, size=n, dim=0, 
+                msg="obs dict and n mismatch in @sample")
+
+        if self.learnable:
+
+            # forward to get parameters
+            out = self.forward(batch_size=n, obs_dict=obs_dict, goal_dict=goal_dict)
+            prior_means, prior_logvars, prior_logweights = out["means"], out["logvars"], out["logweights"]
+
+            if prior_logweights is not None:
+                prior_weights = torch.exp(prior_logweights)
+
+            if self.use_gmm:
+                # learned GMM
+
+                # make uniform weights (in the case that weights were not learned)
+                if not self.gmm_learn_weights:
+                    prior_weights = torch.ones(n, self.num_modes).to(prior_means.device) / self.num_modes
+
+                # sample modes
+                gmm_mode_indices = D.Categorical(prior_weights).sample()
+                
+                # get GMM centers and sample using reparametrization trick
+                selected_means = TensorUtils.gather_sequence(prior_means, indices=gmm_mode_indices)
+                selected_logvars = TensorUtils.gather_sequence(prior_logvars, indices=gmm_mode_indices)
+                z = TorchUtils.reparameterize(selected_means, selected_logvars)
+
+            else:
+                # learned unimodal Gaussian - remove mode dim and sample from Gaussian using reparametrization trick
+                z = TorchUtils.reparameterize(prior_means[:, 0, :], prior_logvars[:, 0, :])
+
+        else:
+            # sample from N(0, 1)
+            z = torch.randn(n, self.latent_dim).float().to(self.device)
+
+        if self.latent_clip is not None:
+            z = z.clamp(-self.latent_clip, self.latent_clip)
+
+        return z
+
+    def kl_loss(self, posterior_params, z=None, obs_dict=None, goal_dict=None):
+        """
+        Computes sample-based KL divergence loss between the Gaussian distribution
+        given by @mu, @logvar and the prior distribution. 
+
+        Args:
+            posterior_params (dict): dictionary with keys "mu" and "logvar" corresponding
+                to torch.Tensor batch of means and log-variances of posterior Gaussian
+                distribution.
+
+            z (torch.Tensor): samples from the Gaussian distribution parametrized by
+                @mu and @logvar. Only needed if @self.use_gmm is True.
+
+            obs_dict (dict): inputs according to @input_dim. Only needs to be provided
+                if any prior parameters are obs-dependent.
+
+            goal_dict (dict): inputs according to @goal_shapes (only if using goal observations)
+
+        Returns:
+            kl_loss (torch.Tensor): KL divergence loss
+        """
+        mu = posterior_params["mean"]
+        logvar = posterior_params["logvar"]
+
+        if not self.learnable:
+            # closed-form Gaussian KL from N(0, 1) prior
+            return LossUtils.KLD_0_1_loss(mu=mu, logvar=logvar)
+
+        # forward to get parameters
+        out = self.forward(batch_size=mu.shape[0], obs_dict=obs_dict, goal_dict=goal_dict)
+        prior_means, prior_logvars, prior_logweights = out["means"], out["logvars"], out["logweights"]
+
+        if not self.use_gmm:
+            # collapse mode dimension and compute Gaussian KL in closed-form
+            prior_means = prior_means[:, 0, :]
+            prior_logvars = prior_logvars[:, 0, :]
+            return LossUtils.KLD_gaussian_loss(
+                mu_1=mu, 
+                logvar_1=logvar, 
+                mu_2=prior_means, 
+                logvar_2=prior_logvars,
+            )
+
+        # GMM KL loss computation
+        var = torch.exp(logvar.clamp(-8, 30)) # clamp for numerical stability
+        prior_vars = torch.exp(prior_logvars.clamp(-8, 30))
+        kl_loss = LossUtils.log_normal(x=z, m=mu, v=var) \
+            - LossUtils.log_normal_mixture(x=z, m=prior_means, v=prior_vars, log_w=prior_logweights)
+        return kl_loss.mean()
+
+    def forward(self, batch_size, obs_dict=None, goal_dict=None):
+        """
+        Computes means, logvars, and GMM weights (if using GMM and learning weights).
+
+        Args:
+            batch_size (int): batch size - this is needed for parameters that are
+                not obs-dependent, to make sure the leading dimension is correct
+                for downstream sampling and loss computation purposes
+
+            obs_dict (dict): inputs according to @input_dim. Only needs to be provided
+                if any prior parameters are obs-dependent.
+
+            goal_dict (dict): inputs according to @goal_shapes (only if using goal observations)
+
+        Returns:
+            prior_params (dict): dictionary containing prior parameters
+        """
+        assert self.learnable
+        prior_params = super(GaussianPrior_Transformer, self).forward(
+            batch_size=batch_size, obs_dict=obs_dict, goal_dict=goal_dict)
+        
+        prior_params.pop('transformer_encoder_outputs', None)
+        
+        for param in prior_params:
+            # print(param, prior_params[param].shape)
+            prior_params[param] = prior_params[param][:,-1,:]
+
+        if self.use_gmm and self.gmm_learn_weights:
+            # normalize learned weight outputs to sum to 1
+            logweights = F.log_softmax(prior_params["weight"], dim=-1)
+        else:
+            logweights = None
+            assert "weight" not in prior_params
+
+        out = dict(means=prior_params["mean"], logvars=prior_params["logvar"], logweights=logweights)
+        return out
+
+    def __repr__(self):
+        """Pretty print network"""
+        header = '{}'.format(str(self.__class__.__name__))
+        msg = ''
+        indent = ' ' * 4
+        msg += textwrap.indent("latent_dim={}\n".format(self.latent_dim), indent)
+        msg += textwrap.indent("latent_clip={}\n".format(self.latent_clip), indent)
+        msg += textwrap.indent("learnable={}\n".format(self.learnable), indent)
+        msg += textwrap.indent("input_dependent={}\n".format(self._input_dependent), indent)
+        msg += textwrap.indent("use_gmm={}\n".format(self.use_gmm), indent)
+        if self.use_gmm:
+            msg += textwrap.indent("gmm_num_nodes={}\n".format(self.num_modes), indent)
+            msg += textwrap.indent("gmm_learn_weights={}\n".format(self.gmm_learn_weights), indent)
+        if self.learnable:
+            if self.prior_module is not None:
+                msg += textwrap.indent("\nprior_module={}\n".format(self.prior_module), indent)
+            msg += textwrap.indent("prior_params={}\n".format(self.prior_params), indent)
+        msg = header + '(\n' + msg + ')'
+        return msg
+
+
+class CategoricalPrior_Transformer(Prior_Transformer):
+    """
+    A class that holds functionality for learning categorical priors for use
+    in VAEs.
+    """
+    def __init__(
+        self,
+        latent_dim,
+        categorical_dim,
+        device,
+        learnable=False,
+        obs_shapes=None,
+        mlp_layer_dims=(),
+        goal_shapes=None,
+        encoder_kwargs=None,
+
+    ):
+        """
+        Args:
+            latent_dim (int): size of latent dimension for the prior
+
+            categorical_dim (int): size of categorical dimension (number of classes
+                for each dimension of latent space)
+
+            device (torch.Device): where the module should live (i.e. cpu, gpu)
+
+            learnable (bool): if True, learn the parameters of the prior (as opposed
+                to a default N(0, 1) prior)
+
+            obs_shapes (OrderedDict): a dictionary that maps modality to
+                expected shapes for observations. If provided, assumes that
+                the prior should depend on observation inputs, and networks 
+                will be created to output prior parameters.
+
+            mlp_layer_dims ([int]): sequence of integers for the MLP hidden layer sizes
+
+            goal_shapes (OrderedDict): a dictionary that maps modality to
+                expected shapes for goal observations.
+
+            encoder_kwargs (dict or None): If None, results in default encoder_kwargs being applied. Otherwise, should
+                be nested dictionary containing relevant per-modality information for encoder networks.
+                Should be of form:
+
+                obs_modality1: dict
+                    feature_dimension: int
+                    core_class: str
+                    core_kwargs: dict
+                        ...
+                        ...
+                    obs_randomizer_class: str
+                    obs_randomizer_kwargs: dict
+                        ...
+                        ...
+                obs_modality2: dict
+                    ...
+        """
+        self.device = device
+        self.latent_dim = latent_dim
+        self.categorical_dim = categorical_dim
+        self.learnable = learnable
+
+        self._input_dependent = (obs_shapes is not None) and (len(obs_shapes) > 0)
+
+        if self._input_dependent:
+            assert learnable
+            assert isinstance(obs_shapes, OrderedDict)
+
+            # network will generate logits for categorical distributions
+            param_shapes = OrderedDict(
+                logit=(self.latent_dim, self.categorical_dim,)
+            )
+            param_obs_dependent = OrderedDict(logit=True)
+        else:
+            # learn obs-indep mean / logvar
+            param_shapes = OrderedDict(
+                logit=(1, self.latent_dim, self.categorical_dim),
+            )
+            param_obs_dependent = OrderedDict(logit=False)
+
+        super(CategoricalPrior_Transformer, self).__init__(
+            param_shapes=param_shapes,
+            param_obs_dependent=param_obs_dependent,
+            obs_shapes=obs_shapes,
+            mlp_layer_dims=mlp_layer_dims,
+            goal_shapes=goal_shapes,
+            encoder_kwargs=encoder_kwargs,
+        )
+
+    def _create_layers(self, net_kwargs):
+        """
+        Update from superclass to only create parameters / networks if not using
+        uniform categorical prior.
+        """
+        if self.learnable:
+            super(CategoricalPrior_Transformer, self)._create_layers(net_kwargs)
+
+    def sample(self, n, obs_dict=None, goal_dict=None):
+        """
+        Returns a batch of samples from the prior distribution.
+
+        Args:
+            n (int): this argument is used to specify the number
+                of samples to generate from the prior.
+
+            obs_dict (dict): inputs according to @obs_shapes. Only needs to be provided
+                if any prior parameters are obs-dependent. Leading dimension should
+                be consistent with @n, the number of samples to generate.
+
+            goal_dict (dict): inputs according to @goal_shapes (only if using goal observations)
+
+        Returns:
+            z (torch.Tensor): batch of sampled latent vectors.
+        """
+
+        # check consistency between n and obs_dict
+        if self._input_dependent:
+            TensorUtils.assert_size_at_dim(obs_dict, size=n, dim=0, 
+                msg="obs dict and n mismatch in @sample")
+
+        if self.learnable:
+
+            # forward to get parameters
+            out = self.forward(batch_size=n, obs_dict=obs_dict, goal_dict=goal_dict)
+            prior_logits = out["logit"]
+
+            # sample one-hot latents from categorical distribution
+            dist = D.Categorical(logits=prior_logits)
+            z = TensorUtils.to_one_hot(dist.sample(), num_class=self.categorical_dim)
+
+        else:
+            # try to include a categorical sample for each class if possible (ensuring rough uniformity)
+            if (self.latent_dim == 1) and (self.categorical_dim <= n):
+                # include samples [0, 1, ..., C - 1] and then repeat until batch is filled
+                dist_samples = torch.arange(n).remainder(self.categorical_dim).unsqueeze(-1).to(self.device)
+            else:
+                # sample one-hot latents from uniform categorical distribution for each latent dimension
+                probs = torch.ones(n, self.latent_dim, self.categorical_dim).float().to(self.device)
+                dist_samples = D.Categorical(probs=probs).sample()
+            z = TensorUtils.to_one_hot(dist_samples, num_class=self.categorical_dim)
+
+        # reshape [B, D, C] to [B, D * C] to be consistent with other priors that return flat latents
+        z = z.reshape(*z.shape[:-2], -1)
+        return z
+
+    def kl_loss(self, posterior_params, z=None, obs_dict=None, goal_dict=None):
+        """
+        Computes KL divergence loss between the Categorical distribution
+        given by the unnormalized logits @logits and the prior distribution. 
+
+        Args:
+            posterior_params (dict): dictionary with key "logits" corresponding
+                to torch.Tensor batch of unnormalized logits of shape [B, D * C] 
+                that corresponds to the posterior categorical distribution
+
+            z (torch.Tensor): samples from encoder - unused for this prior
+
+            obs_dict (dict): inputs according to @obs_shapes. Only needs to be provided
+                if any prior parameters are obs-dependent.
+
+            goal_dict (dict): inputs according to @goal_shapes (only if using goal observations)
+
+        Returns:
+            kl_loss (torch.Tensor): KL divergence loss
+        """
+        logits = posterior_params["logit"].reshape(-1, self.latent_dim, self.categorical_dim)
+        if not self.learnable:
+            # prior logits correspond to uniform categorical distribution
+            prior_logits = torch.zeros_like(logits)
+        else:
+            # forward to get parameters
+            out = self.forward(batch_size=posterior_params["logit"].shape[0], obs_dict=obs_dict, goal_dict=goal_dict)
+            prior_logits = out["logit"]
+
+        prior_dist = D.Categorical(logits=prior_logits)
+        posterior_dist = D.Categorical(logits=logits)
+
+        # sum over latent dimensions, but average over batch dimension
+        kl_loss = D.kl_divergence(posterior_dist, prior_dist)
+        assert len(kl_loss.shape) == 2
+        return kl_loss.sum(-1).mean()
+
+    def forward(self, batch_size, obs_dict=None, goal_dict=None):
+        """
+        Computes prior logits (unnormalized log-probs).
+
+        Args:
+            batch_size (int): batch size - this is needed for parameters that are
+                not obs-dependent, to make sure the leading dimension is correct
+                for downstream sampling and loss computation purposes
+
+            obs_dict (dict): inputs according to @obs_shapes. Only needs to be provided
+                if any prior parameters are obs-dependent.
+
+            goal_dict (dict): inputs according to @goal_shapes (only if using goal observations)
+
+        Returns:
+            prior_params (dict): dictionary containing prior parameters
+        """
+        assert self.learnable
+        return super(CategoricalPrior_Transformer, self).forward(
+            batch_size=batch_size, obs_dict=obs_dict, goal_dict=goal_dict)
+
+    def __repr__(self):
+        """Pretty print network"""
+        header = '{}'.format(str(self.__class__.__name__))
+        msg = ''
+        indent = ' ' * 4
+        msg += textwrap.indent("latent_dim={}\n".format(self.latent_dim), indent)
+        msg += textwrap.indent("categorical_dim={}\n".format(self.categorical_dim), indent)
+        msg += textwrap.indent("learnable={}\n".format(self.learnable), indent)
+        msg += textwrap.indent("input_dependent={}\n".format(self._input_dependent), indent)
+        if self.learnable:
+            if self.prior_module is not None:
+                msg += textwrap.indent("\nprior_module={}\n".format(self.prior_module), indent)
+            msg += textwrap.indent("prior_params={}\n".format(self.prior_params), indent)
+        msg = header + '(\n' + msg + ')'
+        return msg
+
+
 class VAE(torch.nn.Module):
     """
     A Variational Autoencoder (VAE), as described in https://arxiv.org/abs/1312.6114.
@@ -797,6 +1523,9 @@ class VAE(torch.nn.Module):
         prior_categorical_gumbel_softmax_hard=False,
         goal_shapes=None,
         encoder_kwargs=None,
+        enc_use_res_mlp=False,  
+        dec_use_res_mlp=False,     
+        resmlp_kwargs=None,
     ):
         """
         Args:
@@ -986,6 +1715,10 @@ class VAE(torch.nn.Module):
             # initialize temperature for Gumbel-Softmax
             self.set_gumbel_temperature(1.0)
 
+        self.enc_use_res_mlp = enc_use_res_mlp
+        self.dec_use_res_mlp = dec_use_res_mlp
+        self.resmlp_kwargs = resmlp_kwargs
+
         # create encoder, decoder, prior
         self._create_layers()
 
@@ -1033,6 +1766,8 @@ class VAE(torch.nn.Module):
             output_shapes=encoder_output_shapes, 
             layer_dims=self.encoder_layer_dims,
             encoder_kwargs=self._encoder_kwargs,
+            use_res_mlp=self.enc_use_res_mlp,
+            res_mlp_kwargs=self.resmlp_kwargs,
         )
 
     def _create_decoder(self):
@@ -1056,6 +1791,9 @@ class VAE(torch.nn.Module):
             output_shapes=self.output_shapes, 
             layer_dims=self.decoder_layer_dims,
             encoder_kwargs=self._encoder_kwargs,
+            use_res_mlp=self.dec_use_res_mlp,
+            res_mlp_kwargs=self.resmlp_kwargs,
+            image_output_activation=nn.Sigmoid,
         )
 
     def _create_prior(self):
@@ -1366,6 +2104,8 @@ class VAE(torch.nn.Module):
             "decoder_outputs" : reconstructions,
             "kl_loss" : kl_loss,
             "reconstruction_loss" : reconstruction_loss,
+            "reconstructions": reconstructions,
+            "targets": outputs,
         }
 
     def set_gumbel_temperature(self, temperature):

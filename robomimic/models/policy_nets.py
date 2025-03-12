@@ -1263,27 +1263,14 @@ class TransformerGMMActorNetwork(TransformerActorNetwork):
             logits=(self.num_modes,),
         )
 
-    def forward_train(self, obs_dict, actions=None, goal_dict=None, low_noise_eval=None):
-        """
-        Return full GMM distribution, which is useful for computing
-        quantities necessary at train-time, like log-likelihood, KL 
-        divergence, etc.
-        Args:
-            obs_dict (dict): batch of observations
-            actions (torch.Tensor): batch of actions
-            goal_dict (dict): if not None, batch of goal observations
-        Returns:
-            dists (Distribution): sequence of GMM distributions over the timesteps
-        """
-        if self._is_goal_conditioned:
-            assert goal_dict is not None
-            # repeat the goal observation in time to match dimension with obs_dict
-            mod = list(obs_dict.keys())[0]
-            goal_dict = TensorUtils.unsqueeze_expand_at(goal_dict, size=obs_dict[mod].shape[1], dim=1)
-
+    def forward_embedding_only(self, obs_dict, goal_dict=None):
         forward_kwargs = dict(obs=obs_dict, goal=goal_dict)
+        embeddings = MIMO_Transformer.forward_embedding(self, **forward_kwargs)
+        return embeddings
 
-        outputs = MIMO_Transformer.forward(self, **forward_kwargs)
+    def forward_policy_only(self, embeddings, goal_dict=None, low_noise_eval=None):
+        
+        outputs = MIMO_Transformer.forward_output(self, transformer_inputs=embeddings)
         
         means = outputs["mean"]
         scales = outputs["scale"]
@@ -1318,6 +1305,19 @@ class TransformerGMMActorNetwork(TransformerActorNetwork):
         if self.use_tanh:
             # Wrap distribution with Tanh
             dists = TanhWrappedDistribution(base_dist=dists, scale=1.)
+
+        return dists
+    
+    def forward_train(self, obs_dict, actions=None, goal_dict=None, low_noise_eval=None):
+        
+        if self._is_goal_conditioned:
+            assert goal_dict is not None
+            # repeat the goal observation in time to match dimension with obs_dict
+            mod = list(obs_dict.keys())[0]
+            goal_dict = TensorUtils.unsqueeze_expand_at(goal_dict, size=obs_dict[mod].shape[1], dim=1)
+        
+        embeddings = self.forward_embedding_only(obs_dict, goal_dict=goal_dict)
+        dists = self.forward_policy_only(embeddings, goal_dict=goal_dict, low_noise_eval=low_noise_eval)
 
         return dists
 
@@ -1576,3 +1576,247 @@ class VAEActor(Module):
             mod = list(obs_dict.keys())[0]
             n = obs_dict[mod].shape[0]
         return self.decode(obs_dict=obs_dict, goal_dict=goal_dict, z=z, n=n)["action"]
+
+class VAE_MoMaRT(Module):
+    """
+    A VAE that models a distribution of actions conditioned on observations.
+    The VAE prior and decoder are used at test-time as the policy.
+    """
+    def __init__(
+        self,
+        obs_shapes,
+        encoder_layer_dims,
+        decoder_layer_dims,
+        latent_dim,
+        device,
+        conditioned_on_obs=True, # Not used for MoMaRT
+        decoder_is_conditioned=True,
+        decoder_reconstruction_sum_across_elements=False,
+        latent_clip=None,
+        prior_learn=False,
+        prior_is_conditioned=False,
+        prior_layer_dims=(),
+        prior_use_gmm=False,
+        prior_gmm_num_modes=10,
+        prior_gmm_learn_weights=False,
+        prior_use_categorical=False,
+        prior_categorical_dim=10,
+        prior_categorical_gumbel_softmax_hard=False,
+        goal_shapes=None,
+        encoder_kwargs=None,
+        enc_use_res_mlp=False,
+        dec_use_res_mlp=False,
+        res_mlp_kwargs=None,
+    ):
+        """
+        Args:
+            obs_shapes (OrderedDict): a dictionary that maps modality to
+                expected shapes for observations.
+
+            ac_dim (int): dimension of action space.
+
+            goal_shapes (OrderedDict): a dictionary that maps modality to
+                expected shapes for goal observations.
+
+            encoder_kwargs (dict or None): If None, results in default encoder_kwargs being applied. Otherwise, should
+                be nested dictionary containing relevant per-modality information for encoder networks.
+                Should be of form:
+
+                obs_modality1: dict
+                    feature_dimension: int
+                    core_class: str
+                    core_kwargs: dict
+                        ...
+                        ...
+                    obs_randomizer_class: str
+                    obs_randomizer_kwargs: dict
+                        ...
+                        ...
+                obs_modality2: dict
+                    ...
+        """
+        super(VAE_MoMaRT, self).__init__()
+
+        self.input_shapes = OrderedDict()
+        for key in obs_shapes:
+            assert "image" in key
+            self.input_shapes[key] = obs_shapes[key]
+
+        self.condition_shapes = OrderedDict()
+        for key in obs_shapes:
+            assert "image" in key
+            self.condition_shapes[key] = obs_shapes[key]
+
+        self._vae = VAE(
+            input_shapes=self.input_shapes,
+            output_shapes=self.input_shapes,
+            encoder_layer_dims=encoder_layer_dims,
+            decoder_layer_dims=decoder_layer_dims,
+            latent_dim=latent_dim,
+            device=device,
+            condition_shapes=self.condition_shapes,
+            decoder_is_conditioned=decoder_is_conditioned,
+            decoder_reconstruction_sum_across_elements=decoder_reconstruction_sum_across_elements,
+            latent_clip=latent_clip,
+            prior_learn=prior_learn,
+            prior_is_conditioned=prior_is_conditioned,
+            prior_layer_dims=prior_layer_dims,
+            prior_use_gmm=prior_use_gmm,
+            prior_gmm_num_modes=prior_gmm_num_modes,
+            prior_gmm_learn_weights=prior_gmm_learn_weights,
+            prior_use_categorical=prior_use_categorical,
+            prior_categorical_dim=prior_categorical_dim,
+            prior_categorical_gumbel_softmax_hard=prior_categorical_gumbel_softmax_hard,
+            goal_shapes=goal_shapes,
+            encoder_kwargs=encoder_kwargs,
+            enc_use_res_mlp=enc_use_res_mlp,
+            dec_use_res_mlp=dec_use_res_mlp,
+            resmlp_kwargs=res_mlp_kwargs,
+        )
+
+    def sample_prior(self, obs_dict=None, goal_dict=None, n=None):
+        """
+        Thin wrapper around @VaeNets.VAE implementation.
+
+        Args:
+            n (int): this argument is used to specify the number
+                of samples to generate from the prior.
+
+            obs_dict (dict): a dictionary that maps modalities to torch.Tensor
+                batches. Only needs to be provided if @prior_is_conditioned.
+
+            goal_dict (dict): a dictionary that maps modalities to torch.Tensor
+                batches. These should correspond to goal modalities.
+
+        Returns:
+            z (torch.Tensor): latents sampled from the prior
+        """
+        return self._vae.sample_prior(n=n, conditions=obs_dict, goals=goal_dict)
+
+    def output_shape(self, input_shape=None):
+        """
+        This implementation is required by the Module superclass, but is unused since we
+        never chain this module to other ones.
+        """
+        assert NotImplementedError("Should not reach here, check again")
+        return [self.ac_dim]
+
+    def decode(self, obs_dict=None, goal_dict=None, z=None, n=None):
+        """
+        Thin wrapper around @VaeNets.VAE implementation.
+
+        Args:
+            obs_dict (dict): a dictionary that maps modalities to torch.Tensor
+                batches. Only needs to be provided if @decoder_is_conditioned
+                or @z is None (since the prior will require it to generate z).
+
+            goal_dict (dict): a dictionary that maps modalities to torch.Tensor
+                batches. These should correspond to goal modalities.
+
+            z (torch.Tensor): if provided, these latents are used to generate
+                reconstructions from the VAE, and the prior is not sampled.
+
+            n (int): this argument is used to specify the number of samples to
+                generate from the prior. Only required if @z is None - i.e.
+                sampling takes place
+
+        Returns:
+            recons (dict): dictionary of reconstructed inputs (this will be a dictionary
+                with a single "action" key)
+        """
+        conditions = {} # conditioned on the first image in a sequence
+        for key in obs_dict:
+            conditions[key] = obs_dict[key]
+
+        assert (n is not None) and (z is None)
+
+        return self._vae.decode(conditions=conditions, goals=goal_dict, z=z, n=n)
+
+    def forward_train(self, obs_dict, goal_dict=None, freeze_encoder=False):
+        """
+        A full pass through the VAE network used during training to construct KL
+        and reconstruction losses. See @VAE class for more info.
+
+        Args:
+            inputs: (future) image
+            outputs: (future) image
+            conditions: (current) image
+
+        Returns:
+            vae_outputs (dict): a dictionary that contains the following outputs.
+
+                encoder_params (dict): parameters for the posterior distribution
+                    from the encoder forward pass
+
+                encoder_z (torch.Tensor): latents sampled from the encoder posterior
+
+                decoder_outputs (dict): action reconstructions from the decoder
+
+                kl_loss (torch.Tensor): KL loss over the batch of data
+
+                reconstruction_loss (torch.Tensor): reconstruction loss over the batch of data
+        """
+        inputs = {} 
+        for key in obs_dict:
+            inputs[key] = obs_dict[key][:, -1, :]
+        
+        conditions = {} 
+        for key in obs_dict:
+            conditions[key] = obs_dict[key][:, -10, :]
+                
+        return self._vae.forward(
+            inputs=inputs,
+            outputs=inputs,
+            conditions=conditions,
+            goals=goal_dict,
+            freeze_encoder=freeze_encoder)
+
+    def forward(self, obs_dict, goal_dict=None, z=None):
+        """
+        Samples actions from the policy distribution.
+
+        Args:
+            obs_dict (dict): batch of observations
+            goal_dict (dict): if not None, batch of goal observations
+            z (torch.Tensor): if not None, use the provided batch of latents instead
+                of sampling from the prior
+
+        Returns:
+            action (torch.Tensor): batch of actions from policy distribution
+        """
+        # do the same with forward_train, for the error detection purpose
+        return self.forward_train(obs_dict)
+
+
+class VAE_Goal(VAE_MoMaRT):
+
+    def decode(self, obs_dict=None, goal_dict=None, z=None, n=None):
+        conditions = {} # conditioned on the first image in a sequence
+        for key in obs_dict:
+            conditions[key] = obs_dict[key]
+
+        assert (n is not None) and (z is None)
+
+        return self._vae.decode(conditions=conditions, goals=goal_dict, z=z, n=n)
+
+    def forward_train(self, obs_dict, goal_dict=None, freeze_encoder=False):
+
+        for key in obs_dict:
+            assert "image" in key
+
+        outputs = {} 
+        for key in obs_dict:
+            outputs[key] = obs_dict[key][:, -1, :]
+
+        conditions = {} 
+        for key in obs_dict:
+            conditions[key] = obs_dict[key][:, 0, :]
+
+        inputs = obs_dict[key]
+
+        return self._vae.forward(
+            inputs=inputs,
+            outputs=outputs,
+            conditions=conditions,
+            goals=goal_dict,
+            freeze_encoder=freeze_encoder)

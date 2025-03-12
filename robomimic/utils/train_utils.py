@@ -28,6 +28,10 @@ from robomimic.envs.wrappers import EnvWrapper
 from robomimic.algo import RolloutPolicy
 from tianshou.env import SubprocVectorEnv
 
+from robomimic.algo.world_model import DynamicsTrainer
+from robomimic.algo.vae import MoMaRT
+
+import wandb
 
 def get_exp_dir(config, auto_remove_exp_dir=False):
     """
@@ -59,7 +63,7 @@ def get_exp_dir(config, auto_remove_exp_dir=False):
     base_output_dir = os.path.join(base_output_dir, config.experiment.name)
     if os.path.exists(base_output_dir):
         if not auto_remove_exp_dir:
-            ans = input("WARNING: model directory ({}) already exists! \noverwrite? (y/n)\n".format(base_output_dir))
+            ans = "n" #input("WARNING: model directory ({}) already exists! \noverwrite? (y/n)\n".format(base_output_dir))
         else:
             ans = "y"
         if ans == "y":
@@ -114,13 +118,13 @@ def load_data_for_training(config, obs_keys, lang_encoder=None):
             "did not specify filter keys corresponding to train and valid split in dataset" \
             " - please fill config.train.hdf5_filter_key and config.train.hdf5_validation_filter_key"
         train_demo_keys = FileUtils.get_demos_for_filter_key(
-            hdf5_path=os.path.expanduser(config.train.data),
+            hdf5_path=os.path.expanduser(config.train.data[-1]["path"]),
             filter_key=train_filter_by_attribute,
         )
         valid_demo_keys = FileUtils.get_demos_for_filter_key(
-            hdf5_path=os.path.expanduser(config.train.data),
+            hdf5_path=os.path.expanduser(config.train.data[-1]["path"]),
             filter_key=valid_filter_by_attribute,
-        )
+        )       
         assert set(train_demo_keys).isdisjoint(set(valid_demo_keys)), "training demonstrations overlap with " \
             "validation demonstrations!"
         train_dataset = dataset_factory(
@@ -185,10 +189,21 @@ def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=Non
         filter_by_attribute=filter_by_attribute,
         shuffled_obs_key_groups=config.train.shuffled_obs_key_groups,
         lang_encoder=lang_encoder,
+        classifier_weighted_sampling=config.train.classifier_weighted_sampling,
+        remove_preintv_only_sampling=config.train.remove_preintv_only_sampling,
+        use_weighted_bc=config.train.use_weighted_bc,
+        use_iwr_ratio=config.train.use_iwr_ratio,
+        use_sirius_ratio=config.train.use_sirius_ratio,
+        normalize_weights=config.train.normalize_weights,
     )
 
     ds_kwargs["hdf5_path"] = [ds_cfg["path"] for ds_cfg in config.train.data]
-    ds_kwargs["filter_by_attribute"] = [ds_cfg.get("filter_key", filter_by_attribute) for ds_cfg in config.train.data]
+    
+    if config.experiment.validate:
+        # hardcoded solution for train/val split
+        ds_kwargs["filter_by_attribute"] = [filter_by_attribute for ds_cfg in config.train.data]
+    else:
+        ds_kwargs["filter_by_attribute"] = [ds_cfg.get("filter_key", filter_by_attribute) for ds_cfg in config.train.data]
     ds_weights = [ds_cfg.get("weight", 1.0) for ds_cfg in config.train.data]
     ds_langs = [ds_cfg.get("lang", None) for ds_cfg in config.train.data]
 
@@ -235,6 +250,8 @@ def get_dataset(
     else:
         if meta_ds_kwargs is None:
             meta_ds_kwargs = dict()
+                        
+        meta_ds_kwargs["remove_preintv_only_sampling"] = ds_kwargs["remove_preintv_only_sampling"]
         ds = meta_ds_class(
             datasets=ds_list,
             ds_weights=ds_weights,
@@ -779,7 +796,7 @@ def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_nor
     start_time = time.time()
 
     data_loader_iter = iter(data_loader)
-    for _ in LogUtils.custom_tqdm(range(num_steps)):
+    for _step in LogUtils.custom_tqdm(range(num_steps)):
 
         # load next batch from data loader
         try:
@@ -800,7 +817,12 @@ def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_nor
 
         # forward and backward pass
         t = time.time()
-        info = model.train_on_batch(input_batch, epoch, validate=validate)
+        
+        if isinstance(model, DynamicsTrainer) or isinstance(model, MoMaRT):
+            info = model.train_on_batch(input_batch, epoch, validate=validate, step=_step, max_step=num_steps-1)
+        else:
+            info = model.train_on_batch(input_batch, epoch, validate=validate)
+        
         timing_stats["Train_Batch"].append(time.time() - t)
 
         # tensorboard logging
@@ -813,10 +835,28 @@ def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_nor
     step_log_dict = {}
     for i in range(len(step_log_all)):
         for k in step_log_all[i]:
+            if k == "reconstructions" or k == "targets":
+                continue
+            if k == "confusion_matrix":
+                continue
             if k not in step_log_dict:
                 step_log_dict[k] = []
             step_log_dict[k].append(step_log_all[i][k])
+            
+    # calculate confusion matrix
+    confusion_matrix = None
+    if "confusion_matrix" in step_log_all[0]:
+        conf_matrix_lst = []
+        for i in range(len(step_log_all)):
+            conf_matrix_lst.append(step_log_all[i]["confusion_matrix"])
+        confusion_matrix = sum(conf_matrix_lst) / len(conf_matrix_lst)          
+            
     step_log_all = dict((k, float(np.mean(v))) for k, v in step_log_dict.items())
+    step_log_all["confusion_matrix"] = confusion_matrix 
+    
+    if "reconstructions" in step_log:
+        step_log_all["reconstructions"] = step_log["reconstructions"]
+        step_log_all["targets"] = step_log["targets"]
 
     # add in timing stats
     for k in timing_stats:

@@ -1,0 +1,6 @@
+{
+    "threshold": 0.06,
+    "demos_embedding_path": "",
+    "eval_method": "last",
+    "num_future": 200
+}

@@ -1,7 +1,7 @@
 """
 Implementation of Behavioral Cloning (BC).
 """
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 import torch
 import torch.nn as nn
@@ -207,7 +207,7 @@ class BC(PolicyAlgo):
         policy_grad_norms = TorchUtils.backprop_for_loss(
             net=self.nets["policy"],
             optim=self.optimizers["policy"],
-            loss=losses["action_loss"],
+            loss=losses[self._loss_name()],
             max_grad_norm=self.global_config.train.max_grad_norm,
         )
         info["policy_grad_norms"] = policy_grad_norms
@@ -254,6 +254,9 @@ class BC(PolicyAlgo):
         """
         assert not self.nets.training
         return self.nets["policy"](obs_dict, goal_dict=goal_dict)
+
+    def _loss_name(self):
+        return "action_loss"
 
 
 class BC_Gaussian(BC):
@@ -740,8 +743,24 @@ class BC_Transformer(BC):
 
         if self.pred_future_acs:
             assert input_batch["actions"].shape[1] == h
-
+        
+        if "sample_weights" in batch:
+            
+            if self.supervise_all_steps:
+                # supervision on entire sequence (instead of just current timestep)
+                if self.pred_future_acs:
+                    ac_start = h - 1
+                else:
+                    ac_start = 0
+                input_batch["weights"] = batch["sample_weights"][:, ac_start:ac_start+h]
+            else:
+                # just use current timestep
+                input_batch["weights"] = batch["sample_weights"][:, h-1]
+        
         input_batch = TensorUtils.to_device(TensorUtils.to_float(input_batch), self.device)
+        
+        input_batch["env_name"] = batch["env_name"][:h]
+        
         return input_batch
 
     def _forward_training(self, batch, epoch=None):
@@ -879,10 +898,21 @@ class BC_Transformer_GMM(BC_Transformer):
         """
 
         # loss is just negative log-likelihood of action targets
-        action_loss = -predictions["log_probs"].mean()
+        action_loss = -predictions["log_probs"]
+        if "weights" in batch:
+            action_loss *= batch["weights"]
+        action_loss = action_loss.mean()
+
+        env_names = batch["env_name"] 
+        env_log_probs = defaultdict(list)
+        for log_prob, env_name in zip(predictions["log_probs"], env_names):
+            env_log_probs[env_name].append(log_prob)
+        env_mean_log_probs = {env: torch.mean(torch.stack(log_probs)) for env, log_probs in env_log_probs.items()}
+
         return OrderedDict(
             log_probs=-action_loss,
             action_loss=action_loss,
+            env_log_probs=env_mean_log_probs
         )
 
     def log_info(self, info):
@@ -897,6 +927,11 @@ class BC_Transformer_GMM(BC_Transformer):
         log = PolicyAlgo.log_info(self, info)
         log["Loss"] = info["losses"]["action_loss"].item()
         log["Log_Likelihood"] = info["losses"]["log_probs"].item() 
+        
+        if "env_log_probs" in info["losses"]:
+            for env_name, log_prob in info["losses"]["env_log_probs"].items():
+                log[f"Log_Likelihood_by_Task/{env_name}"] = log_prob.item()
+        
         if "policy_grad_norms" in info:
             log["Policy_Grad_Norms"] = info["policy_grad_norms"]
         return log

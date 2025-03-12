@@ -233,12 +233,20 @@ class BaseConfig(Config):
 
         self.train.max_grad_norm = None  # clip gradient norms (see `backprop_for_loss` function in torch_utils.py) 
 
-        self.train.data_format = "robomimic" # either "robomimic" or "r2d2"
+        self.train.data_format = "robomimic" # either "robomimic" or "r2d2" or "mutex"
 
         # list of observation keys to shuffle randomly in the dataset.
         # must be list of tuples pairs, with each pair representing
         # the corresponding observation key groups to shuffle
         self.train.shuffled_obs_key_groups = None
+        
+        self.train.classifier_weighted_sampling = False
+        self.train.remove_preintv_only_sampling = False
+        
+        self.train.use_weighted_bc = False
+        self.train.use_iwr_ratio = False
+        self.train.use_sirius_ratio = False
+        self.train.normalize_weights = True
 
     def algo_config(self):
         """
@@ -267,7 +275,6 @@ class BaseConfig(Config):
             "robot0_eef_pos", 
             "robot0_eef_quat", 
             "robot0_gripper_qpos", 
-            "object",
         ]
         self.observation.modalities.obs.rgb = []              # specify rgb image observations for agent
         self.observation.modalities.obs.depth = []

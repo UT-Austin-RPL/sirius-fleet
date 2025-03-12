@@ -1,0 +1,5 @@
+{
+    "ood_type": "ood",
+    "num_future": 200, 
+    "demos_embedding_path": ""
+}

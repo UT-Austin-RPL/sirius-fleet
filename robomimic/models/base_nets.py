@@ -292,6 +292,46 @@ class MLP(Module):
         return msg
 
 
+class Residual_MLP_Block(Module):
+    def __init__(
+        self,
+        hidden_dim,
+        activation=nn.ReLU,
+    ):
+        super(Residual_MLP_Block, self).__init__()
+        
+        self._hidden_dim = hidden_dim
+        
+        layers = [
+            nn.Linear(hidden_dim, hidden_dim),
+            activation(),
+            nn.Linear(hidden_dim, hidden_dim),
+            activation(),
+        ]
+        
+        self._model = nn.Sequential(*layers)
+        
+    def output_shape(self, input_shape=None):
+        """
+        Function to compute output shape from inputs to this module. 
+
+        Args:
+            input_shape (iterable of int): shape of input. Does not include batch dimension.
+                Some modules may not need this argument, if their output does not depend 
+                on the size of the input, or if they assume fixed size input.
+
+        Returns:
+            out_shape ([int]): list of integers corresponding to output shape
+        """
+        return [self._hidden_dim]
+        
+    def forward(self, inputs):
+        """
+        Forward pass.
+        """
+        return inputs + self._model(inputs)
+
+
 class RNN_Base(Module):
     """
     A wrapper class for a multi-step RNN and a per-step network.
@@ -1533,3 +1573,75 @@ class FeatureAggregator(Module):
             # weighted mean-pooling
             return torch.sum(x * self.agg_weight, dim=1)
         raise Exception("unexpected agg type: {}".forward(self.agg_type))
+
+class ResidualMLP(Module):
+    """
+    Base class for simple Multi-Layer Perceptrons.
+    """
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim,
+        num_blocks,
+        activation=nn.ReLU,
+        normalization=True,
+        output_activation=None,
+    ):
+        """
+        Args:
+            input_dim (int): dimension of inputs
+
+            output_dim (int): dimension of outputs
+
+            layer_dims ([int]): sequence of integers for the hidden layers sizes
+
+            layer_func: mapping per layer - defaults to Linear
+
+            layer_func_kwargs (dict): kwargs for @layer_func
+
+            activation: non-linearity per layer - defaults to ReLU
+
+            normalization (bool): if True, apply layer normalization after each layer
+
+            output_activation: if provided, applies the provided non-linearity to the output layer
+        """
+        super(ResidualMLP, self).__init__()
+        layers = []
+            
+        layers.append(nn.Linear(input_dim, hidden_dim))
+        
+        for _ in range(num_blocks):
+            layers.append(Residual_MLP_Block(hidden_dim, activation=activation))
+            if normalization:
+                layers.append(nn.LayerNorm(hidden_dim))
+            
+        if output_activation is not None:
+            layers.append(output_activation())
+            
+        self.nets = layers
+        self._model = nn.Sequential(*layers)
+
+        self._input_dim = input_dim
+        self._hidden_dim = hidden_dim
+        self._act = activation
+        self._output_act = output_activation
+
+    def output_shape(self, input_shape=None):
+        """
+        Function to compute output shape from inputs to this module. 
+
+        Args:
+            input_shape (iterable of int): shape of input. Does not include batch dimension.
+                Some modules may not need this argument, if their output does not depend 
+                on the size of the input, or if they assume fixed size input.
+
+        Returns:
+            out_shape ([int]): list of integers corresponding to output shape
+        """
+        return [self._hidden_dim]
+
+    def forward(self, inputs):
+        """
+        Forward pass.
+        """
+        return self._model(inputs)

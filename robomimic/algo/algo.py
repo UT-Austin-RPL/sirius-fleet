@@ -87,6 +87,26 @@ def algo_factory(algo_name, config, obs_key_shapes, ac_dim, device):
         device=device,
         **algo_kwargs
     )
+  
+
+def res_mlp_args_from_config(res_mlp_config):
+    return dict(
+        use_res_mlp=res_mlp_config.enabled,
+        res_mlp_kwargs=dict(
+            hidden_dim=res_mlp_config.hidden_dim,
+            num_blocks=res_mlp_config.num_blocks,
+            normalization=res_mlp_config.use_layer_norm,
+        ),
+    )
+
+def res_mlp_args_from_config_vae(res_mlp_config):
+    return dict(
+        res_mlp_kwargs=dict(
+            hidden_dim=res_mlp_config.hidden_dim,
+            num_blocks=res_mlp_config.num_blocks,
+            normalization=res_mlp_config.use_layer_norm,
+        ),
+    )
 
 
 class Algo(object):

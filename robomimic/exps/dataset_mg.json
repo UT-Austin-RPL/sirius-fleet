@@ -1,0 +1,470 @@
+{
+    "algo_name": "bc_dyn",
+    "experiment": {
+        "name": "seed_2_ds_mg-20p",
+        "validate": false,
+        "logging": {
+            "terminal_output_to_txt": true,
+            "log_tb": true,
+            "log_wandb": true,
+            "wandb_proj_name": "bc_xfmr_03-02-None_robocasa_im"
+        },
+        "mse": {},
+        "save": {
+            "enabled": true,
+            "every_n_seconds": null,
+            "every_n_epochs": 100,
+            "epochs": [],
+            "on_best_validation": false,
+            "on_best_rollout_return": false,
+            "on_best_rollout_success_rate": false
+        },
+        "epoch_every_n_steps": 500,
+        "validation_epoch_every_n_steps": 10,
+        "env": null,
+        "additional_envs": null,
+        "render": false,
+        "render_video": true,
+        "keep_all_videos": false,
+        "video_skip": 5,
+        "rollout": {
+            "enabled": false,
+            "n": 25,
+            "horizon": 500,
+            "rate": 200,
+            "warmstart": 400,
+            "terminate_on_success": true
+        },
+        "env_meta_update_dict": {
+            "env_kwargs": {
+                "generative_textures": null,
+                "scene_split": null,
+                "style_ids": null,
+                "layout_ids": null,
+                "layout_and_style_ids": [
+                    [
+                        1,
+                        1
+                    ],
+                    [
+                        2,
+                        2
+                    ],
+                    [
+                        4,
+                        4
+                    ],
+                    [
+                        6,
+                        9
+                    ],
+                    [
+                        7,
+                        10
+                    ]
+                ]
+            }
+        }
+    },
+    "train": {
+        "data": [
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "env_meta_update_dict": {
+                    "env_kwargs": {
+                        "obj_groups": [
+                            "condiment_bottle",
+                            "baguette",
+                            "kettle_electric",
+                            "avocado",
+                            "can"
+                        ],
+                        "exclude_obj_groups": null
+                    }
+                },
+                "path": "~/robocasa/datasets/single_stage/kitchen_pnp/PnPCounterToCab/mg/2024-01-22-07-53-41/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "env_meta_update_dict": {
+                    "env_kwargs": {
+                        "obj_groups": [
+                            "beer",
+                            "orange",
+                            "jam",
+                            "canned_food",
+                            "coffee_cup"
+                        ],
+                        "exclude_obj_groups": null
+                    }
+                },
+                "path": "~/robocasa/datasets/single_stage/kitchen_pnp/PnPCabToCounter/mg/2024-01-22-08-04-03/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "env_meta_update_dict": {
+                    "env_kwargs": {
+                        "obj_groups": [
+                            "apple",
+                            "banana",
+                            "bar_soap",
+                            "cup",
+                            "cucumber"
+                        ],
+                        "exclude_obj_groups": null
+                    }
+                },
+                "path": "~/robocasa/datasets/single_stage/kitchen_pnp/PnPCounterToSink/mg/2024-01-22-02-46-24/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "env_meta_update_dict": {
+                    "env_kwargs": {
+                        "obj_groups": [
+                            "peach",
+                            "lime",
+                            "yogurt",
+                            "fish",
+                            "kiwi"
+                        ],
+                        "exclude_obj_groups": null
+                    }
+                },
+                "path": "~/robocasa/datasets/single_stage/kitchen_pnp/PnPSinkToCounter/mg/2024-01-22-02-46-07/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "env_meta_update_dict": {
+                    "env_kwargs": {
+                        "obj_groups": [
+                            "potato",
+                            "garlic",
+                            "steak",
+                            "eggplant",
+                            "mango"
+                        ],
+                        "exclude_obj_groups": null
+                    }
+                },
+                "path": "~/robocasa/datasets/single_stage/kitchen_pnp/PnPCounterToStove/mg/2024-01-21-06-50-56/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "env_meta_update_dict": {
+                    "env_kwargs": {
+                        "obj_groups": [
+                            "broccoli",
+                            "cheese",
+                            "bell_pepper",
+                            "squash",
+                            "sweet_potato"
+                        ],
+                        "exclude_obj_groups": null
+                    }
+                },
+                "path": "~/robocasa/datasets/single_stage/kitchen_pnp/PnPCounterToMicrowave/mg/2024-01-21-06-50-13/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "env_meta_update_dict": {
+                    "env_kwargs": {
+                        "obj_groups": [
+                            "corn",
+                            "tomato",
+                            "hot_dog",
+                            "egg",
+                            "carrot"
+                        ],
+                        "exclude_obj_groups": null
+                    }
+                },
+                "path": "~/robocasa/datasets/single_stage/kitchen_pnp/PnPMicrowaveToCounter/mg/2024-01-22-02-45-18/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 800,
+                "do_eval": true,
+                "filter_key": "train_200_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_doors/OpenDoorDoubleHinge/mg/2024-01-23-20-42-16/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 800,
+                "do_eval": true,
+                "filter_key": "train_200_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_doors/CloseDoorDoubleHinge/mg/2024-01-23-06-33-05/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_300_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_doors/OpenDoorSingleHinge/mg/2024-01-23-20-42-26/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_300_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_doors/CloseDoorSingleHinge/mg/2024-01-22-23-55-41/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_sink/TurnOnSinkFaucet/mg/2024-01-25-09-20-09/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_sink/TurnOffSinkFaucet/mg/2024-01-25-09-20-24/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_stove/TurnOnStove/mg/2024-01-25-09-20-45/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 500,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_stove/TurnOffStove/mg/2024-01-25-09-21-03/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 800,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_coffee/CoffeeSetupMug/mg/2024-01-25-09-21-40/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 800,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_coffee/CoffeeServeMug/mg/2024-01-25-09-21-55/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 300,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_coffee/CoffeePressButton/mg/2024-01-26-09-04-58/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 300,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_microwave/TurnOnMicrowave/mg/2024-01-26-09-04-47/demo_gentex_im128.hdf5"
+            },
+            {
+                "horizon": 300,
+                "do_eval": true,
+                "filter_key": "train_500_demos",
+                "path": "~/robocasa/datasets/single_stage/kitchen_microwave/TurnOffMicrowave/mg/2024-01-26-09-04-50/demo_gentex_im128.hdf5"
+            }
+        ],
+        "output_dir": "~/expdata/robocasa/im/bc_xfmr/03-02-None",
+        "num_data_workers": 6,
+        "hdf5_cache_mode": null,
+        "hdf5_use_swmr": true,
+        "hdf5_load_next_obs": false,
+        "hdf5_normalize_obs": false,
+        "hdf5_filter_key": null,
+        "seq_length": 20,
+        "pad_seq_length": true,
+        "frame_stack": 20,
+        "pad_frame_stack": true,
+        "dataset_keys": [
+            "actions"
+        ],
+        "goal_mode": null,
+        "cuda": true,
+        "batch_size": 16,
+        "num_epochs": 2000,
+        "max_grad_norm": 100.0,
+        "seed": 2,
+        "action_config": {
+            "actions": {
+                "normalization": null
+            },
+            "action_dict/abs_pos": {
+                "normalization": "min_max"
+            },
+            "action_dict/abs_rot_axis_angle": {
+                "normalization": "min_max",
+                "format": "rot_axis_angle"
+            },
+            "action_dict/abs_rot_6d": {
+                "normalization": null,
+                "format": "rot_6d"
+            },
+            "action_dict/rel_pos": {
+                "normalization": null
+            },
+            "action_dict/rel_rot_axis_angle": {
+                "normalization": null,
+                "format": "rot_axis_angle"
+            },
+            "action_dict/rel_rot_6d": {
+                "normalization": null,
+                "format": "rot_6d"
+            },
+            "action_dict/gripper": {
+                "normalization": null
+            },
+            "action_dict/base_mode": {
+                "normalization": null
+            }
+        }
+    },
+    "algo": {
+        "optim_params": {
+            "policy": {
+                "optimizer_type": "adamw",
+                "learning_rate": {
+                    "initial": 0.0001,
+                    "decay_factor": 1.0,
+                    "epoch_schedule": [
+                        100
+                    ],
+                    "scheduler_type": "constant_with_warmup"
+                },
+                "regularization": {
+                    "L2": 0.01
+                }
+            }
+        },
+        "loss": {
+            "l2_weight": 1.0,
+            "l1_weight": 0.0,
+            "cos_weight": 0.0
+        },
+        "actor_layer_dims": [],
+        "gaussian": {
+            "enabled": false
+        },
+        "gmm": {
+            "enabled": true,
+            "num_modes": 5,
+            "min_std": 0.005,
+            "std_activation": "softplus",
+            "low_noise_eval": true
+        },
+        "vae": {
+            "enabled": false
+        },
+        "rnn": {
+            "enabled": false
+        },
+        "transformer": {
+            "enabled": true,
+            "supervise_all_steps": true,
+            "pred_future_acs": true,
+            "causal": false,
+            "num_layers": 6,
+            "embed_dim": 512,
+            "num_heads": 8,
+	    "context_length": 20
+        },
+        "language_conditioned": false
+    },
+    "observation": {
+        "modalities": {
+            "obs": {
+                "low_dim": [
+                    "robot0_eef_pos",
+                    "robot0_eef_quat",
+                    "robot0_base_pos",
+                    "robot0_base_quat",
+                    "robot0_gripper_qpos"
+                ],
+                "rgb": [
+                    "robot0_agentview_left_image",
+                    "robot0_agentview_right_image",
+                    "robot0_eye_in_hand_image"
+                ],
+                "depth": [],
+                "scan": []
+            },
+            "goal": {
+                "low_dim": [],
+                "rgb": [],
+                "depth": [],
+                "scan": []
+            }
+        },
+        "encoder": {
+            "low_dim": {
+                "core_class": null,
+                "core_kwargs": {},
+                "obs_randomizer_class": null,
+                "obs_randomizer_kwargs": {}
+            },
+            "rgb": {
+                "core_class": "VisualCoreLanguageConditioned",
+                "core_kwargs": {
+                    "feature_dimension": 64,
+                    "backbone_class": "ResNet18ConvFiLM",
+                    "backbone_kwargs": {
+                        "pretrained": false,
+                        "input_coord_conv": false
+                    },
+                    "pool_class": "SpatialSoftmax",
+                    "pool_kwargs": {
+                        "num_kp": 32,
+                        "learnable_temperature": false,
+                        "temperature": 1.0,
+                        "noise_std": 0.0
+                    }
+                },
+                "obs_randomizer_class": "CropRandomizer",
+                "obs_randomizer_kwargs": {
+                    "crop_height": 116,
+                    "crop_width": 116,
+                    "num_crops": 1,
+                    "pos_enc": false
+                }
+            },
+            "depth": {
+                "core_class": "VisualCore",
+                "core_kwargs": {},
+                "obs_randomizer_class": null,
+                "obs_randomizer_kwargs": {}
+            },
+            "scan": {
+                "core_class": "ScanCore",
+                "core_kwargs": {},
+                "obs_randomizer_class": null,
+                "obs_randomizer_kwargs": {}
+            }
+        }
+    },
+    "meta": {
+        "hp_base_config_file": "/home/anonymous/Projects/robocasa/robomimic-kitchen/robomimic/exps/templates/bc_transformer.json",
+        "hp_keys": [
+            "seed",
+            "ds",
+            "obsrandargs"
+        ],
+        "hp_values": [
+            2,
+            "mg-20p",
+            {
+                "crop_height": 116,
+                "crop_width": 116,
+                "num_crops": 1,
+                "pos_enc": false
+            }
+        ]
+    }
+}

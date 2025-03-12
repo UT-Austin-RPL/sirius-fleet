@@ -281,6 +281,7 @@ class Config(dict):
         other.update(kwargs)
         for k, v in other.items():
             if self.is_key_locked and k not in self:
+                continue
                 raise RuntimeError("Cannot update - this config has been key-locked and key '{}' does not exist".format(k))
             if (not isinstance(self[k], dict)) or (not isinstance(v, dict)):
                 self[k] = v

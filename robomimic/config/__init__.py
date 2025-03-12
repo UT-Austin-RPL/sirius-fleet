@@ -12,3 +12,5 @@ from robomimic.config.iris_config import IRISConfig
 from robomimic.config.td3_bc_config import TD3_BCConfig
 from robomimic.config.diffusion_policy_config import DiffusionPolicyConfig
 from robomimic.config.act_config import ACTConfig
+from robomimic.config.world_model_config import WorldModelConfig
+from robomimic.config.vae_config import VAEConfig

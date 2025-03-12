@@ -46,6 +46,12 @@ class SequenceDataset(torch.utils.data.Dataset):
         shuffled_obs_key_groups=None,
         lang_encoder=None,
         dataset_lang=None,
+        classifier_weighted_sampling=False,
+        remove_preintv_only_sampling=False,
+        use_weighted_bc=False,
+        use_iwr_ratio=False,
+        use_sirius_ratio=False,
+        normalize_weights=True,
     ):
         """
         Dataset class for fetching sequences of experience.
@@ -126,6 +132,16 @@ class SequenceDataset(torch.utils.data.Dataset):
         # set up lang and language embedding
         self.dataset_lang = dataset_lang # language for entire dataset
 
+        # for weighted sampling
+        self.classifier_weighted_sampling = classifier_weighted_sampling
+        self.remove_preintv_only_sampling = remove_preintv_only_sampling
+
+        # for weighted bc
+        self.use_weighted_bc = use_weighted_bc
+        self.use_iwr_ratio = use_iwr_ratio
+        self.use_sirius_ratio = use_sirius_ratio
+        self.normalize_weights = normalize_weights
+
         self.n_frame_stack = frame_stack
         assert self.n_frame_stack >= 1
 
@@ -188,7 +204,26 @@ class SequenceDataset(torch.utils.data.Dataset):
         else:
             self.shuffled_obs_key_groups = shuffled_obs_key_groups
 
+        if self.remove_preintv_only_sampling:
+            self._create_sampling_weights_for_meta_dataset()
+
+        if self.use_weighted_bc:
+            self._update_weights()  # update the weights according to intv_labels
+
         self.close_and_delete_hdf5_handle()
+
+    def _create_sampling_weights_for_meta_dataset(self):
+        
+        self.action_mode_cache = np.array([self._get_action_mode(i, select_mode=0) 
+                                           for i in range(len(self))])
+        
+        weights = np.ones(len(self))
+
+        preintv_inds = np.where(self.action_mode_cache == -10)[0]
+        if len(preintv_inds) > 0:
+            weights[preintv_inds] = 0 # set preintv to 0
+
+        self._sampling_weights = weights
 
     def load_demo_info(self, filter_by_attribute=None, demos=None):
         """
@@ -225,7 +260,10 @@ class SequenceDataset(torch.utils.data.Dataset):
         self.total_num_sequences = 0
         from tqdm import tqdm
         for ep in self.demos:
-            demo_length = self.hdf5_file["data/{}".format(ep)].attrs["num_samples"]
+            try:
+                demo_length = self.hdf5_file["data/{}".format(ep)].attrs["num_samples"]
+            except:
+                demo_length = len(self.hdf5_file["data/{}".format(ep)]["actions"])
             self._demo_id_to_start_indices[ep] = self.total_num_sequences
             self._demo_id_to_demo_length[ep] = demo_length
 
@@ -521,6 +559,17 @@ class SequenceDataset(torch.utils.data.Dataset):
             seq_length=self.seq_length
         )
 
+        if self.use_weighted_bc:
+            weight_dict = {
+                -1: self.w_demos,
+                0: self.w_rollouts,
+                1: self.w_intvs,
+                -10: self.w_pre_intvs,
+            }
+            
+            intv_labels = meta["intv_labels"]
+            meta["sample_weights"] = torch.Tensor([weight_dict[label] for label in intv_labels]).to(torch.float32)
+
         # determine goal index
         goal_index = None
         if self.goal_mode == "last":
@@ -582,6 +631,10 @@ class SequenceDataset(torch.utils.data.Dataset):
                 self._demo_id_to_demo_lang_emb[demo_id],
                 (T, 1)
             )
+        try:
+            meta["env_name"] = json.loads(self.hdf5_file["data"].attrs["env_args"])["env_name"]
+        except:
+            meta["env_name"] = "mutex"
 
         return meta
 
@@ -717,6 +770,109 @@ class SequenceDataset(torch.utils.data.Dataset):
         meta["ep"] = demo_id
         return meta
 
+    def _get_action_mode(self, index, select_mode=-1):
+        
+        # select_mode: choose first (0) or last (-1) of the trajectory segment
+        
+        demo_id = self._index_to_demo_id[index]
+        demo_start_index = self._demo_id_to_start_indices[demo_id]
+
+        # start at offset index if not padding for frame stacking
+        demo_index_offset = 0 if self.pad_frame_stack else (self.n_frame_stack - 1)
+        index_in_demo = index - demo_start_index + demo_index_offset
+
+        meta = self.get_dataset_sequence_from_demo(
+            demo_id,
+            index_in_demo=index_in_demo,
+            keys=["intv_labels"],
+            seq_length=self.seq_length
+        )
+        return meta["intv_labels"][select_mode]
+
+    def _get_iwr_ratio(self):
+        self.action_mode_cache = np.array([self._get_action_mode(i) for i in range(len(self))])
+        
+        num_int = np.sum(self.action_mode_cache == 1)
+        total_num = len(self.action_mode_cache)
+        weight_intv = (total_num - num_int) / num_int
+        self.w_demos = 1.
+        self.w_rollouts = 1.
+        self.w_intvs = weight_intv
+        self.w_pre_intvs = 1.
+
+    def _get_sirius_ratio(self):
+        
+        # weights are using the last index of the action modes of the sequence
+        self.action_mode_cache = np.array([self._get_action_mode(i) for i in range(len(self))])
+
+        num_int = np.sum(self.action_mode_cache == 1)
+        num_demos = np.sum(self.action_mode_cache == -1)
+        num_rollouts = np.sum(self.action_mode_cache == 0)
+        num_pre_intv = np.sum(self.action_mode_cache == -10)
+
+        total_num = len(self.action_mode_cache)
+        ratio_intv = num_int / total_num
+        ratio_demos = num_demos / total_num
+        ratio_rollouts = num_rollouts / total_num
+        ratio_pre_intv = num_pre_intv / total_num
+
+        weight_intv = 0.5
+        weight_preintv = 0.002
+
+        self.w_demos = 1
+        self.w_intvs = weight_intv / ratio_intv
+        self.w_rollouts = (1 - weight_intv - ratio_demos - weight_preintv) / ratio_rollouts
+        self.w_pre_intvs = weight_preintv / ratio_pre_intv
+
+    def _update_weights(self):
+            
+        labels = []
+        for index in LogUtils.custom_tqdm(range(len(self))):
+            
+            demo_id = self._index_to_demo_id[index]
+            demo_start_index = self._demo_id_to_start_indices[demo_id]
+
+            # start at offset index if not padding for frame stacking
+            demo_index_offset = 0 if self.pad_frame_stack else (self.n_frame_stack - 1)
+            index_in_demo = index - demo_start_index + demo_index_offset
+
+            label = self.get_dataset_sequence_from_demo(
+                demo_id,
+                index_in_demo=index_in_demo,
+                keys=["intv_labels"],
+                seq_length=self.seq_length,
+            )["intv_labels"]
+
+            labels.append(label)
+
+        labels = np.stack(labels)
+
+        if self.use_iwr_ratio:
+            self._get_iwr_ratio()
+
+        if self.use_sirius_ratio:
+            self._get_sirius_ratio()
+
+        weight_dict = {
+            -1: self.w_demos,
+            0: self.w_rollouts,
+            1: self.w_intvs,
+            -10: self.w_pre_intvs,
+        }
+
+        weights = np.ones((len(self), self.seq_length))
+        assert weights.shape == labels.shape
+
+        for (l, w) in weight_dict.items():
+            inds = np.where(labels == l)
+            weights[inds] = w
+
+        if self.normalize_weights:
+            weights /= np.mean(weights)
+
+        self._sample_weights = weights
+        print("Done.")
+        
     def get_dataset_sampler(self):
         """
         Return instance of torch.utils.data.Sampler or None. Allows
@@ -725,7 +881,78 @@ class SequenceDataset(torch.utils.data.Dataset):
         See the `train` function in scripts/train.py, and torch
         `DataLoader` documentation, for more info.
         """
+        if self.classifier_weighted_sampling:
+            return self.get_classifier_weighted_sampler()
+        
+        if self.remove_preintv_only_sampling:
+            return self.get_remove_preintv_only_sampler()
+        
         return None
+
+    def get_remove_preintv_only_sampler(self):
+        
+        self.action_mode_cache = np.array([self._get_action_mode(i, select_mode=0) 
+                                           for i in range(len(self))])
+        
+        weights = np.ones(len(self))
+
+        preintv_inds = np.where(self.action_mode_cache == -10)[0]
+        if len(preintv_inds) > 0:
+            weights[preintv_inds] = 0 # set preintv to 0
+
+        self._sampling_weights = weights
+
+        sampler = torch.utils.data.WeightedRandomSampler(
+            weights=weights,
+            num_samples=len(self),
+            replacement=True,
+        )
+        print("Done.")
+        return sampler
+    
+    def get_classifier_weighted_sampler(self):
+        
+        # The hardcoded version will be removed in the future
+        self.action_mode_cache = np.array([self._get_action_mode(i) for i in range(len(self))])
+
+        num_int = np.sum(self.action_mode_cache == 1)
+        num_demos = np.sum(self.action_mode_cache == -1)
+        num_rollouts = np.sum(self.action_mode_cache == 0)
+        num_pre_intv = np.sum(self.action_mode_cache == -10)
+
+        print(num_int, num_demos, num_rollouts, num_pre_intv)
+
+        total_num = len(self.action_mode_cache)
+        ratio_intv = num_int / total_num
+        ratio_demos_rollouts = (num_demos + num_rollouts) / total_num
+        ratio_pre_intv = num_pre_intv / total_num
+
+        self.w_demos = 1 / ratio_demos_rollouts
+        self.w_rollouts = 1 / ratio_demos_rollouts
+        self.w_intvs = 1 / ratio_intv
+        self.w_pre_intvs = 1 / ratio_pre_intv
+        
+        weight_dict = {
+            -1: self.w_demos,
+            0: self.w_rollouts,
+            1: self.w_intvs,
+            -10: self.w_pre_intvs,
+        }
+        
+        weights = np.ones(len(self))
+
+        for (l, w) in weight_dict.items():
+            inds = np.where(self.action_mode_cache == l)[0]
+            if len(inds) > 0:
+                weights[inds] = weight_dict[l]
+
+        sampler = torch.utils.data.WeightedRandomSampler(
+            weights=weights,
+            num_samples=len(self),
+            replacement=True,
+        )
+        print("Done.")
+        return sampler
 
 
 class R2D2Dataset(SequenceDataset):
@@ -1066,6 +1293,7 @@ class MetaDataset(torch.utils.data.Dataset):
         datasets,
         ds_weights,
         normalize_weights_by_ds_size=False,
+        remove_preintv_only_sampling=False,
     ):
         super(MetaDataset, self).__init__()
         self.datasets = datasets
@@ -1074,6 +1302,16 @@ class MetaDataset(torch.utils.data.Dataset):
             self.ds_weights = np.array(ds_weights) / ds_lens
         else:
             self.ds_weights = ds_weights
+            
+        self.remove_preintv_only_sampling = remove_preintv_only_sampling
+        
+        if remove_preintv_only_sampling:
+            self.total_weights = []
+            self.total_weights_lst = []
+            for ds in self.datasets:
+                self.total_weights.extend(ds._sampling_weights)
+                self.total_weights_lst.append(ds._sampling_weights)
+
         self._ds_ind_bins = np.cumsum([0] + list(ds_lens))
 
         # cache mode "all" not supported! The action normalization stats of each
@@ -1112,18 +1350,26 @@ class MetaDataset(torch.utils.data.Dataset):
         return str_output
 
     def get_dataset_sampler(self):
-        if np.all(np.array(self.ds_weights) == 1):
-            """
-            if all weights are 1, then no need to use weighted sampler
-            """
-            return None
+        
+        if self.remove_preintv_only_sampling:
+            
+            # make sure the weights are correct
+            assert len(self.total_weights) == len(self)
+            for i, (start, end) in enumerate(zip(self._ds_ind_bins[:-1], self._ds_ind_bins[1:])):
+                assert (self.total_weights[start:end] == self.total_weights_lst[i]).all()
+            
+            sampler = torch.utils.data.WeightedRandomSampler(
+                weights=self.total_weights,
+                num_samples=len(self),
+                replacement=True,
+            )
+            return sampler
         
         weights = np.ones(len(self))
         for i, (start, end) in enumerate(zip(self._ds_ind_bins[:-1], self._ds_ind_bins[1:])):
             weights[start:end] = self.ds_weights[i]
 
-        # sampler = torch.utils.data.WeightedRandomSampler(
-        sampler = CustomWeightedRandomSampler(
+        sampler = torch.utils.data.WeightedRandomSampler(
             weights=weights,
             num_samples=len(self),
             replacement=True,
